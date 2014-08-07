@@ -21,6 +21,7 @@ Build-Depends:
  libqt4-dev,
  libqt4-opengl-dev,
  libtool,
+ liglew-dev,
  qt4-default,
  qt4-qmake,
  pkg-config
