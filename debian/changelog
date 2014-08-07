@@ -1,3 +1,9 @@
+mapmap (0.1.1-6~trusty~ppa1) trusty; urgency=low
+
+  * Fix mapmap.pro so that it installs files.
+
+ -- Alexandre Quessy <alexandre@quessy.net>  Thu, 07 Aug 2014 18:30:30 -0400
+
 mapmap (0.1.1-5~trusty~ppa1) trusty; urgency=low
 
   * Add install file.
