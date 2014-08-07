@@ -1,0 +1,9 @@
+?package(mapmap):\
+  needs="X11" \
+  hints="Video,Featureful" \
+  section="Applications/Video" \
+  title="MapMap video mapping editor" \
+  longtitle="MapMap is a free video mapping editor to control video projections" \
+  command="/usr/bin/mapmap"
+
+# TODO: icon="mapmap_32x32.xpm"

@@ -1,0 +1,51 @@
+Source: mapmap
+Section: video
+Priority: optional
+Homepage: http://mapmap.info
+Maintainer: Alexandre Quessy <alexandre@quessy.net>
+Build-Depends:
+ cdbs,
+ debhelper (>= 7.0.0),
+ dh-buildinfo,
+ doxygen,
+ gstreamer1.0-plugins-bad,
+ gstreamer1.0-plugins-bad-videoparsers,
+ gstreamer1.0-plugins-base,
+ gstreamer1.0-plugins-base-apps,
+ gstreamer1.0-plugins-good,
+ gstreamer1.0-plugins-ugly,
+ gstreamer1.0-x,
+ libgstreamer-plugins-base1.0-dev,
+ libgstreamer1.0-dev,
+ liblo-dev,
+ libqt4-dev,
+ libqt4-opengl-dev,
+ libtool,
+ qt4-default,
+ qt4-qmake,
+ pkg-config
+Standards-Version: 3.8.2
+Vcs-Git: https://github.com/mapmapteam/ubuntu-mapmap.git
+Vcs-Browser: https://github.com/mapmapteam/ubuntu-mapmap
+
+Package: mapmap
+Architecture: any
+Depends:
+ gstreamer1.0-alsa,
+ gstreamer1.0-ffmpeg,
+ gstreamer1.0-plugins-bad,
+ gstreamer1.0-plugins-base,
+ gstreamer1.0-plugins-good,
+ gstreamer1.0-plugins-ugly,
+ gstreamer1.0-x,
+ ${shlibs:Depends},
+ ${misc:Depends}
+Recommends:
+ gstreamer1.0-tools
+Suggests:
+  mencoder
+Description: video mapping software
+ MapMap is a free/libre/open source software for
+ artists to edit video mapping projections.
+ .
+ This package contains the application.

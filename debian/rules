@@ -1,0 +1,20 @@
+#!/usr/bin/make -f
+# rules
+#
+include /usr/share/cdbs/1/rules/debhelper.mk
+include /usr/share/cdbs/1/class/qmake.mk
+include /usr/share/cdbs/1/class/qmake.mk
+
+# QMAKE = /opt/qt4-maemo5/bin/qmake
+
+DEB_BUILDDIR = debian/builddeb
+DEB_BUILDDIR = debian/builddeb
+DEB_QMAKE_ARGS = $(CURDIR)/mapmap.pro -r PREFIX=/usr
+DEB_QMAKE_ARGS = $(CURDIR)/mapmap.pro -r PREFIX=/usr
+
+DEB_CONFIGURE_USER_FLAGS := --enable-static
+
+# after the directories are created but before dh_compress is run.
+common-binary-post-install-arch::
+	dh_buildinfo
+
