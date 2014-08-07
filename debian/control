@@ -33,7 +33,6 @@ Package: mapmap
 Architecture: any
 Depends:
  gstreamer1.0-alsa,
- gstreamer1.0-ffmpeg,
  gstreamer1.0-plugins-bad,
  gstreamer1.0-plugins-base,
  gstreamer1.0-plugins-good,

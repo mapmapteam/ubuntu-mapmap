@@ -1,3 +1,9 @@
+mapmap (0.1.1-4~trusty~ppa1) trusty; urgency=low
+
+  * Remove dependency to ffmpeg GStreamer plugins.
+
+ -- Alexandre Quessy <alexandre@quessy.net>  Thu, 07 Aug 2014 17:14:27 -0400
+
 mapmap (0.1.1-3~trusty~ppa1) trusty; urgency=low
 
   * Fix a typo.
