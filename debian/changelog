@@ -1,3 +1,9 @@
+mapmap (0.1.1-5~trusty~ppa1) trusty; urgency=low
+
+  * Add install file.
+
+ -- Alexandre Quessy <aalex@be>  Thu, 07 Aug 2014 17:45:25 -0400
+
 mapmap (0.1.1-4~trusty~ppa1) trusty; urgency=low
 
   * Remove dependency to ffmpeg GStreamer plugins.
