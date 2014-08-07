@@ -2,7 +2,7 @@ mapmap (0.1.1-2~trusty~ppa1) trusty; urgency=low
 
   * Add libglew as a dependency. 
 
- -- Alexandre Quessy <aalex@quessy.net>  Thu, 07 Aug 2014 16:46:29 -0400
+ -- Alexandre Quessy <alexandre@quessy.net>  Thu, 07 Aug 2014 16:46:29 -0400
 
 mapmap (0.1.1-1~trusty~ppa1) trusty; urgency=low
 
