@@ -1,3 +1,9 @@
+mapmap (0.2.0-2~trusty~ppa1) trusty; urgency=low
+
+  * Remove some useless build-deps
+
+ -- Alexandre Quessy <alexandre@quessy.net>  Mon, 29 Dec 2014 00:06:34 -0500
+
 mapmap (0.2.0-1~trusty~ppa1) trusty; urgency=low
 
   * New upstream release.
