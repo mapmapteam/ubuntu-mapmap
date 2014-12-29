@@ -1,3 +1,9 @@
+mapmap (0.2.0-1~trusty~ppa1) trusty; urgency=low
+
+  * New upstream release.
+
+ -- Alexandre Quessy <alexandre@quessy.net>  Sun, 28 Dec 2014 20:09:12 -0500
+
 mapmap (0.1.1-6~trusty~ppa1) trusty; urgency=low
 
   * Fix mapmap.pro so that it installs files.
