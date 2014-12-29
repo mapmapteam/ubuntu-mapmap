@@ -12,7 +12,7 @@ Build-Depends:
  libgstreamer-plugins-base1.0-dev,
  libgstreamer1.0-dev,
  liblo-dev,
- libqt5opengl5-dev
+ libqt5opengl5-dev,
  libtool,
  pkg-config,
  qt5-default,
