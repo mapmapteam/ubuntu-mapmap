@@ -9,4 +9,4 @@ DEB_QMAKE_ARGS = $(CURDIR)/mapmap.pro
 # after the directories are created but before dh_compress is run.
 common-binary-post-install-arch::
 	dh_buildinfo
-
+	dh_installmime
