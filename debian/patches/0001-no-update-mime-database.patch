@@ -1,0 +1,25 @@
+diff --git a/mapmap.pro b/mapmap.pro
+index 6474264..9848f06 100644
+--- a/mapmap.pro
++++ b/mapmap.pro
+@@ -85,12 +85,14 @@ unix:!mac {
+   mimetypesfile.files = resources/texts/mapmap.xml 
+   mimetypesfile.path = /usr/share/mime/packages
+   INSTALLS += mimetypesfile
+-  updatemimetypes.path = /usr/share/mime/packages
+-  updatemimetypes.commands = update-mime-database /usr/share/mime
+-  INSTALLS += updatemimetypes
+-  updatemimeappdefault.path = /usr/share/applications
+-  updatemimeappdefault.commands='grep mapmap.desktop /usr/share/applications/defaults.list >/dev/null|| sudo echo "application/mapmap=mapmap.desktop;" >> /usr/share/applications/defaults.list'
+-  INSTALLS += updatemimeappdefault
++
++  # Requires root priviledges:
++  # updatemimetypes.path = /usr/share/mime/packages
++  # updatemimetypes.commands = update-mime-database /usr/share/mime
++  # INSTALLS += updatemimetypes
++  # updatemimeappdefault.path = /usr/share/applications
++# # updatemimeappdefault.commands='grep mapmap.desktop /usr/share/applications/defaults.list >/dev/null|| sudo echo "application/mapmap=mapmap.desktop;" >> /usr/share/applications/defaults.list'
++  # INSTALLS += updatemimeappdefault
+   
+   # Add the docs target:
+   docs.depends = $(HEADERS) $(SOURCES)
