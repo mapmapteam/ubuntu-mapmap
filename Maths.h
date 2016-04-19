@@ -1,6 +1,8 @@
 /*
  * Math.h
  *
+ * Contains a set of math utility functions to be used accross MapMap.
+ *
  * (c) 2014 Sofian Audry -- info(@)sofianaudry(.)com
  *
  * This program is free software: you can redistribute it and/or modify
@@ -17,12 +19,13 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-
 #ifndef MATH_H_
 #define MATH_H_
 
-#include <QtGlobal>
+#include "MM.h"
 #include <cmath>
+
+MM_BEGIN_NAMESPACE
 
 /// Converts from degrees to radians.
 inline qreal degreesToRadians(qreal degrees) { return degrees / 180.0f * M_PI; }
@@ -53,5 +56,12 @@ inline qreal dist(const QPointF& p1, const QPointF& p2) {
 inline bool distIsInside(const QPointF& p1, const QPointF& p2, qreal radius) {
   return distSq(p1, p2) < sq(radius);
 }
+
+/// Performs a boolean XOR operation.
+inline bool xOr(bool a, bool b) {
+  return (a && !b) || (!a && b);
+}
+
+MM_END_NAMESPACE
 
 #endif /* MATH_H_ */

@@ -12,38 +12,29 @@ Build it::
 
   ./build.sh
 
-Ubuntu 14.04
-~~~~~~~~~~~~
-
-Follow the instructions for Ubuntu 13.10 (below) but also install the following packages:
-sudo apt-get install -y qttools5-dev-tools
-
-Ubuntu 13.10
-~~~~~~~~~~~~
+Ubuntu 13.10 and 14.04 LTS
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Install basic development tools fot Qt projects, plus liblo for OSC support::
 
   sudo apt-get install -y \
       liblo-dev \
-      libglew-dev \
+      qttools5-dev-tools \
       qt5-default
+
 
 Install GStreamer 1.0 libraries and plugins:
 
   sudo apt-get install -y \
       libgstreamer1.0-dev \
       libgstreamer-plugins-base1.0-dev \
-      gstreamer1.0-alsa \
-      gstreamer1.0-fluendo-mp3 \
       gstreamer1.0-gnonlin \
-      gstreamer1.0-nice \
       gstreamer1.0-plugins-bad \
-      gstreamer1.0-plugins-libav \
+      gstreamer1.0-libav \
       gstreamer1.0-plugins-base \
       gstreamer1.0-plugins-base-apps \
       gstreamer1.0-plugins-good \
       gstreamer1.0-plugins-ugly \
-      gstreamer1.0-pulseaudio \
       gstreamer1.0-x \
       gstreamer1.0-tools
 
@@ -53,6 +44,13 @@ Install extra packages if you want to build the documentation::
       doxygen \
       graphviz \
       rst2pdf
+
+Arch Linux
+~~~~~~~~~~
+
+Install basic development tools fot Qt projects, GStreamer 1.0 and liblo for OSC support::
+
+sudo pacman -S qt5-tools liblo gstreamer
 
 To edit translations
 --------------------
@@ -67,13 +65,42 @@ Then, do this::
 Build on Mac OS X
 -----------------
 
-* Install the Apple Developer Tools. You need to register with a credit card in the Apple Store in order to download it.
-* Install Qt5. You can get it from http://qt-project.org/downloads and choose the default location.
-* Install the GStreamer framework. You need the runtime and devel packages to be installed:
-http://gstreamer.freedesktop.org/data/pkg/osx/1.2.4.1/gstreamer-1.0-devel-1.2.4.1-universal.pkg
-http://gstreamer.freedesktop.org/data/pkg/osx/1.2.4.1/gstreamer-1.0-1.2.4.1-universal.pkg
+NOTE: This has been tested on OS X 10.11 (El Capitan).
+
+Install tools and dependencies:
+
+1) Install the Apple Developer Tools
+  - You need to register with a credit card in the Apple Store in order to download it (no need to pay, but Apple needs your soul).
+2) Install Qt5
+  - You can get the open source version from http://www.qt.io/download-open-source/
+  - Run the installer and choose the default location (which should be ~/Qt).
+  - Latest tested version: 5.5.1
+3) Install liblo
+  - Use the following guide: http://macappstore.org/liblo/
+  - OR compile from the tar.gz - it should install it to /usr/local
+4) Install the GStreamer framework. You need the runtime and devel packages to be installed:
+  - https://gstreamer.freedesktop.org/data/pkg/osx/1.6.0/gstreamer-1.0-1.6.0-x86_64.pkg
+  - https://gstreamer.freedesktop.org/data/pkg/osx/1.6.0/gstreamer-1.0-devel-1.6.0-x86_64.pkg
+  - http://gstreamer.freedesktop.org/data/pkg/osx/1.6.0/gstreamer-1.0-1.6.0-x86_64-packages.dmg
 
 Do this::
 
   ./build.sh
 
+It will create a .app and a .dmg.
+
+DMGVERSION.txt should be created automatically with "1" as its contents. Update to "2", and so on, if needed.
+
+
+Use on OS X
+-----------
+Users can simply the following two packages:
+
+http://gstreamer.freedesktop.org/data/pkg/osx/1.6.0/gstreamer-1.0-1.6.0-x86_64-packages.dmg
+http://gstreamer.freedesktop.org/data/pkg/osx/1.6.0/gstreamer-1.0-1.6.0-x86_64.pkg
+
+MapMap should then work.
+
+If the appearance of the window of the OSC port number in the preferences seem corrupted, you might want to reset MapMap's preferences::
+
+  rm -f ~/Library/Preferences/info.mapmap.MapMap.plist

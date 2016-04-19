@@ -23,10 +23,12 @@
 #include <iostream>
 #include <sstream>
 
+MM_BEGIN_NAMESPACE
+
 uid UidAllocator::allocate()
 {
   // Iterate until we find an id that has not been taken.
-  uid id = 0;
+  uid id = 1;
   while (exists(id))
     id++;
 
@@ -65,4 +67,4 @@ bool UidAllocator::exists(uid id) const
   return ( std::find(_ids.begin(), _ids.end(), id) != _ids.end() );
 }
 
-
+MM_END_NAMESPACE

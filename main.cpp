@@ -4,7 +4,6 @@
 
 #include <iostream>
 #include <QTranslator>
-#include <QtGui>
 #include <QDebug>
 #if USING_QT_5
 #include <QCommandLineParser>
@@ -13,15 +12,20 @@
 #include "MM.h"
 #include "MainWindow.h"
 #include "MainApplication.h"
+
+#include "MetaObjectRegistry.h"
+
 #include <stdlib.h>
 #include <iostream>
+
+MM_USE_NAMESPACE
 
 static void set_env_vars_if_needed()
 {
 #ifdef __MACOSX_CORE__
-  std::cout << "OS X detected. Set environment for GStreamer-SDK support." << std::endl;
+  std::cout << "OS X detected. Set environment for GStreamer support." << std::endl;
   if (0 == setenv("GST_PLUGIN_PATH", "/Library/Frameworks/GStreamer.framework/Libraries", 1))
-      std::cout << " * GST_PLUGIN_PATH=Library/Frameworks/GStreamer.framework/Libraries" << std::endl;
+      std::cout << " * GST_PLUGIN_PATH=/Library/Frameworks/GStreamer.framework/Libraries" << std::endl;
   if (0 == setenv("GST_DEBUG", "2", 1))
       std::cout << " * GST_DEBUG=2" << std::endl;
   //setenv("LANG", "C", 1);
@@ -43,9 +47,41 @@ public:
   }
 };
 
+void initRegistry()
+{
+  MetaObjectRegistry& registry = MetaObjectRegistry::instance();
+
+  // Paints.
+  registry.add<Video>();
+  registry.add<Image>();
+  registry.add<Color>();
+
+  // Mappings.
+  registry.add<TextureMapping>();
+  registry.add<ColorMapping>();
+
+  // Shapes.
+  registry.add<Quad>();
+  registry.add<Mesh>();
+  registry.add<MM_PREPEND_NAMESPACE(Ellipse)>();
+  registry.add<Triangle>();
+}
+
+// Intercept all logging message and display it in the console
+void logMessageHandler(QtMsgType type, const QMessageLogContext &context, const QString &msg)
+{
+  ConsoleWindow::console()->printMessage(type, context, msg);
+}
+
 int main(int argc, char *argv[])
 {
+  // Install message handler
+  qInstallMessageHandler(logMessageHandler);
+
   set_env_vars_if_needed();
+
+  // Initialize meta-object registry.
+  initRegistry();
 
   MainApplication app(argc, argv);
 
@@ -77,6 +113,10 @@ int main(int argc, char *argv[])
   QCommandLineOption oscPortOption(QStringList() << "p" << "osc-port", "Use OSC port number <osc-port>.", "osc-port", "");
   parser.addOption(oscPortOption);
 
+  // --lang option
+  QCommandLineOption localeOption(QStringList() << "l" << "lang", "Use language <lang>.", "lang", "en");
+  parser.addOption(localeOption);
+
   // Positional argument: file
   parser.addPositionalArgument("file", "Load project from that file.");
 
@@ -90,13 +130,30 @@ int main(int argc, char *argv[])
     Util::eraseSettings();
   }
 
+  // IMPORTANT: Translator must be set *before* the MainWindow is created for it to work.
+  QString langValue = parser.value("lang");
+  QTranslator translator;
+  if (translator.load(QString(":/translation-%1").arg(langValue)))
+  {
+    qDebug() << "Setting language to " << langValue << "." << endl;
+    app.installTranslator(&translator);
+    QLocale::setDefault(QLocale(langValue));
+  }
+  else if (langValue != "en")
+  {
+    qWarning() << "Unrecognized/unsupported language: " << langValue << "." << endl;
+  }
+
 #endif // USING_QT_5
 
   if (! QGLFormat::hasOpenGL())
+  {
     qFatal("This system has no OpenGL support.");
+    return 1;
+  }
 
   // Create splash screen.
-  QPixmap pixmap("splash.png");
+  QPixmap pixmap(":/mapmap-splash");
   QSplashScreen splash(pixmap);
 
   // Show splash.
@@ -105,30 +162,20 @@ int main(int argc, char *argv[])
   splash.showMessage("  " + QObject::tr("Initiating program..."),
                      Qt::AlignLeft | Qt::AlignTop, MM::WHITE);
 
-  bool FORCE_FRENCH_LANG = false;
-  // set_language_to_french(app);
-  if (FORCE_FRENCH_LANG) // XXX FIXME this if seems wrong
-  {
-    std::cerr << "This system has no OpenGL support" << std::endl;
-    return 1;
-  }
-
   // Let splash for at least one second.
   I::sleep(1);
 
   // Create window.
-  MainWindow win;
-
-  QFontDatabase db;
-  Q_ASSERT( QFontDatabase::addApplicationFont(":/base-font") != -1);
-  app.setFont(QFont(":/base-font", 10, QFont::Bold));
+  MainWindow* win = MainWindow::instance();
+  // Add custom font
+  int id = QFontDatabase::addApplicationFont(":/base-font");
+  QString family = QFontDatabase::applicationFontFamilies(id).at(0);
+  app.setFont(QFont(family, 11, QFont::Normal));
 
   // Load stylesheet.
-  QFile stylesheet("mapmap.qss");
+  QFile stylesheet(":/stylesheet");
   stylesheet.open(QFile::ReadOnly);
   app.setStyleSheet(QLatin1String(stylesheet.readAll()));
-
-  //win.setLocale(QLocale("fr"));
 
 #if USING_QT_5
   // read positional argument:
@@ -149,34 +196,38 @@ int main(int argc, char *argv[])
   // finally, load the project file.
   if (projectFileValue != "")
   {
-    win.loadFile(projectFileValue);
+    win->loadFile(projectFileValue);
   }
 
   QString oscPortNumberValue = parser.value("osc-port");
   if (oscPortNumberValue != "")
   {
-    win.setOscPort(oscPortNumberValue);
+    win->setOscPort(oscPortNumberValue);
   }
+
 #endif
+
 
   // Terminate splash.
   splash.showMessage("  " + QObject::tr("Done."),
                      Qt::AlignLeft | Qt::AlignTop, MM::WHITE);
-  splash.finish(&win);
+  splash.finish(win);
   splash.raise();
 
   // Launch program.
-  win.show();
+  win->show();
 
 #if USING_QT_5
   if (parser.isSet(fullscreenOption))
   {
-    qDebug() << "TODO: Running in fullscreen mode";
-    win.startFullScreen();
+    win->startFullScreen();
   }
 #endif
 
   // Start app.
-  return app.exec();
+  int result = app.exec();
+
+  delete win;
+  return result;
 }
 

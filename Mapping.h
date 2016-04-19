@@ -22,10 +22,20 @@
 #define MAPPING_H_
 
 #include <QtGlobal>
-#include <tr1/memory>
+
 #include "Shape.h"
 #include "Paint.h"
+
+#include "Element.h"
+
 #include "UidAllocator.h"
+
+#include "MetaObjectRegistry.h"
+
+MM_BEGIN_NAMESPACE
+
+// TODO: replace by ProjectAttribute
+//#include "ProjectWriter.h"
 
 /**
  * Mapping is the central concept of this software.
@@ -39,31 +49,45 @@
  * can thus change their opacity level, toggle their visibility, set
  * them in "solo" mode and lock them.
  */
-class Mapping
+class Mapping : public Element
 {
+  Q_OBJECT
+
+  Q_PROPERTY(bool solo    READ isSolo    WRITE setSolo)
+  Q_PROPERTY(bool visible READ isVisible WRITE setVisible)
+  Q_PROPERTY(int  depth   READ getDepth  WRITE setDepth)
+
+//  Q_PROPERTY(MShape::ptr shape READ getShape)
+//  Q_PROPERTY(MShape::ptr inputShape READ getInputShape)
+
+  Q_PROPERTY(bool hasInputShape READ hasInputShape STORED false)
+//  Q_PROPERTY(Paint::ptr paint READ getPaint WRITE setPaint)
+
 protected:
   /// The input Paint instance.
   Paint::ptr _paint;
 
   /// The output Shape instance.
-  Shape::ptr _shape;
+  MShape::ptr _shape;
+
+  /// The (optional) input Shape instance.
+  MShape::ptr _inputShape;
 
 private:
   static UidAllocator allocator;
 
-  uid _id;
-
-  bool _isLocked;
   bool _isSolo;
   bool _isVisible;
-  float _opacity;
+  int _depth; // depth of the layer
 
 protected:
-  /// Constructor.
-  Mapping(Paint::ptr paint, Shape::ptr shape, uid id=NULL_UID);
+  Mapping(int id=NULL_UID);
+  Mapping(Paint::ptr paint, uid id=NULL_UID);
+  Mapping(Paint::ptr paint, MShape::ptr shape, uid id=NULL_UID);
+  Mapping(Paint::ptr paint, MShape::ptr shape, MShape::ptr inputShape, uid id=NULL_UID);
 
 public:
-  typedef std::tr1::shared_ptr<Mapping> ptr;
+  typedef QSharedPointer<Mapping> ptr;
 
   virtual ~Mapping();
 
@@ -76,6 +100,8 @@ public:
   virtual void build() {
     _paint->build();
     _shape->build();
+    if (hasInputShape())
+      _inputShape->build();
   }
 
   /// The type of the mapping (expressed as a string).
@@ -85,34 +111,42 @@ public:
   Paint::ptr getPaint() const { return _paint; }
 
   /// Returns the (output) shape.
-  Shape::ptr getShape() const { return _shape; }
+  MShape::ptr getShape() const { return _shape; }
 
   /// Returns true iff the mapping possesses an input (source) shape.
-  virtual bool hasInputShape() const { return false; }
+  virtual bool hasInputShape() const { return !_inputShape.isNull(); }
 
   /// Returns the input (source) shape (if this mapping has one) or a null pointer if not.
-  virtual Shape::ptr getInputShape() const { return Shape::ptr(); }
+  virtual MShape::ptr getInputShape() const { return _inputShape; }
 
-  uid getId() const { return _id; }
+  virtual void setSolo(bool solo);
+  virtual void setVisible(bool visible);
+  virtual void setDepth(int depth);
 
-  void setLocked(bool locked)    { _isLocked = locked; }
-  void setSolo(bool solo)        { _isSolo = solo; }
-  void setVisible(bool visible)  { _isVisible = visible; }
-  void setOpacity(float opacity) {
-    Q_ASSERT(0.0f <= opacity && opacity <= 1.0f);
-    _opacity = opacity;
-  }
-  void setPaint(Paint::ptr p) { _paint = p; }
-  void removePaint() { if (_paint) delete _paint.get(); }
+  virtual void setLocked(bool locked);
 
-  void toggleLocked()  { _isLocked = !_isLocked; }
-  void toggleSolo()    { _isSolo = !_isSolo; }
-  void toggleVisible() { _isVisible = !_isVisible; }
+  virtual bool isSolo() const      { return _isSolo; }
+  virtual bool isVisible() const   { return _isVisible; }
+  virtual int getDepth() const { return _depth; }
 
-  bool isLocked() const    { return _isLocked; }
-  bool isSolo() const      { return _isSolo; }
-  bool isVisible() const   { return _isVisible; }
-  float getOpacity() const { return _opacity; }
+  virtual void toggleSolo()    { setSolo(!isSolo()); }
+  virtual void toggleVisible() { setVisible(!isVisible()); }
+
+  virtual float getComputedOpacity() const { return getOpacity() * _paint->getOpacity(); }
+
+  virtual void setPaint(Paint::ptr p) { _paint = p; }
+  virtual void setShape(MShape::ptr s) { _shape = s; }
+  virtual void setInputShape(MShape::ptr s) { _inputShape = s; }
+
+  virtual void read(const QDomElement& obj);
+  virtual void write(QDomElement& obj);
+
+protected:
+  virtual QList<QString> _propertiesAttributes() const
+  { return Element::_propertiesAttributes() << "solo" << "visible" << "depth"; }
+
+  void _readShape(const QDomElement& obj, bool isOutput);
+  void _writeShape(QDomElement& obj, bool isOutput);
 };
 
 /**
@@ -120,10 +154,17 @@ public:
  */
 class ColorMapping : public Mapping
 {
+  Q_OBJECT
 public:
-  ColorMapping(Paint::ptr paint, Shape::ptr shape,
+  Q_INVOKABLE ColorMapping(int id=NULL_UID)
+    : Mapping(id) {}
+
+  ColorMapping(Paint::ptr paint, MShape::ptr shape,
                uid id=NULL_UID)
     : Mapping(paint, shape, id) {}
+
+  /// Returns true iff the mapping possesses an input (source) shape.
+  virtual bool hasInputShape() const { return false; }
 
   virtual QString getType() const {
     return getShape()->getType() + "_color";
@@ -137,32 +178,28 @@ public:
  */
 class TextureMapping : public Mapping
 {
-private:
-  Shape::ptr _inputShape;
-
+  Q_OBJECT
 public:
+  Q_INVOKABLE TextureMapping(int id=NULL_UID)
+    : Mapping(id) {}
+
   TextureMapping(Paint::ptr paint,
-                 Shape::ptr shape,
-                 Shape::ptr inputShape, uid id=NULL_UID)
-    : Mapping(paint, shape, id),
-      _inputShape(inputShape)
+                 MShape::ptr shape,
+                 MShape::ptr inputShape, uid id=NULL_UID)
+    : Mapping(paint, shape, inputShape, id)
   {
     // Only supports shape of the same type (for now).
     Q_ASSERT(shape->getType() == inputShape->getType());
   }
 
-  virtual void build() {
-    Mapping::build();
-    _inputShape->build();
-  }
+  /// Returns true iff the mapping possesses an input (source) shape.
+  virtual bool hasInputShape() const { return true; }
 
   virtual QString getType() const {
     return getShape()->getType() + "_texture";
   }
-
-public:
-  virtual bool hasInputShape() const { return true; }
-  virtual Shape::ptr getInputShape() const { return _inputShape; }
 };
+
+MM_END_NAMESPACE
 
 #endif /* MAPPING_H_ */

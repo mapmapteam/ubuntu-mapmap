@@ -1,62 +1,109 @@
-CONFIG  += qt debug
+CONFIG  += qt debug c++11
 TEMPLATE = app
-VERSION = 0.2.0
+# Always use major.minor.micro version number format
+VERSION = 0.4.0
 TARGET = mapmap
-QT += gui opengl xml widgets
+QT += gui opengl xml core
+greaterThan(QT_MAJOR_VERSION, 4): QT += widgets core
 DEFINES += UNICODE QT_THREAD_SUPPORT QT_CORE_LIB QT_GUI_LIB
 
 HEADERS  = \
-    DestinationGLCanvas.h \
+    Commands.h \
+    ConcurrentQueue.h \
+    ConsoleWindow.h \
+    Element.h \
+    Ellipse.h \
     MM.h \
     MainApplication.h \
     MainWindow.h \
-    Mapper.h \
+    MappingGui.h \
+    MappingItemDelegate.h \
+    MappingListModel.h \
     MapperGLCanvas.h \
+    MapperGLCanvasToolbar.h \
     Mapping.h \
     MappingManager.h \
     Maths.h \
-    MediaImpl.h \
+    VideoImpl.h \
+    Mesh.h \
+    MetaObjectRegistry.h \
     OscInterface.h \
     OscReceiver.h \
+    OutputGLCanvas.h \
     OutputGLWindow.h \
     Paint.h \
     PaintGui.h \
+    Polygon.h \
     PreferencesDialog.h \
+    ProjectLabels.h \
     ProjectReader.h \
     ProjectWriter.h \
+    Quad.h \
+    Serializable.h \
     Shape.h \
-    SourceGLCanvas.h \
+    Shapes.h \
+    ShapeControlPainter.h \
+    ShapeGraphicsItem.h \
+    Triangle.h \
     UidAllocator.h \
     Util.h
 
 SOURCES  = \
-    DestinationGLCanvas.cpp \
+    Commands.cpp \
+    ConsoleWindow.cpp \
+    Element.cpp \
+    Ellipse.cpp \
     MM.cpp \
     MainApplication.cpp \
     MainWindow.cpp \
-    Mapper.cpp \
+    MappingGui.cpp \
+    MappingItemDelegate.cpp \
+    MappingListModel.cpp \
     MapperGLCanvas.cpp \
+    MapperGLCanvasToolbar.cpp \
     Mapping.cpp \
     MappingManager.cpp \
-    MediaImpl.cpp \
+    VideoImpl.cpp \
+    Mesh.cpp \
+    MetaObjectRegistry.cpp \
     OscInterface.cpp \
     OscReceiver.cpp \
+    OutputGLCanvas.cpp \
     OutputGLWindow.cpp \
     Paint.cpp \
     PaintGui.cpp \
+    Polygon.cpp \
     PreferencesDialog.cpp \
+    ProjectLabels.cpp \
     ProjectReader.cpp \
     ProjectWriter.cpp \
+    Serializable.cpp \
     Shape.cpp \
-    SourceGLCanvas.cpp \
+    ShapeControlPainter.cpp \
+    ShapeGraphicsItem.cpp \
     UidAllocator.cpp \
     Util.cpp \
     main.cpp
 
-RESOURCES = mapmap.qrc
-TRANSLATIONS = resources/texts/mapmap_fr.ts
+
 include(contrib/qtpropertybrowser/src/qtpropertybrowser.pri)
 include(contrib/qtpropertybrowser-extension/qtpropertybrowser-extension.pri)
+
+TRANSLATIONS = resources/texts/mapmap_fr.ts
+RESOURCES = mapmap.qrc
+
+# Manage lrelease (for translations)
+isEmpty(QMAKE_LRELEASE) {
+    win32:QMAKE_LRELEASE = $$[QT_INSTALL_BINS]\lrelease.exe
+    else:QMAKE_LRELEASE = $$[QT_INSTALL_BINS]/lrelease
+}
+updateqm.input = TRANSLATIONS
+updateqm.output = ${QMAKE_FILE_PATH}/${QMAKE_FILE_BASE}.qm
+updateqm.commands = $$QMAKE_LRELEASE ${QMAKE_FILE_IN} -qm ${QMAKE_FILE_PATH}/${QMAKE_FILE_BASE}.qm
+updateqm.CONFIG += no_link
+QMAKE_EXTRA_COMPILERS += updateqm
+PRE_TARGETDEPS += compiler_updateqm_make_all
+system(lrelease mapmap.pro) # Run lrelease
 
 # Add the docs target:
 docs.depends = $(HEADERS) $(SOURCES)
@@ -67,11 +114,14 @@ QMAKE_EXTRA_TARGETS += docs
 unix:!mac {
   DEFINES += UNIX
   CONFIG += link_pkgconfig
+  INCLUDE_PATH += 
   PKGCONFIG += \
-    gstreamer-1.0 gstreamer-base-1.0 gstreamer-app-1.0 \
+    gstreamer-1.0 gstreamer-base-1.0 gstreamer-app-1.0 gstreamer-pbutils-1.0 \
     liblo \
-    gl x11 glew
-  QMAKE_CXXFLAGS += -Wno-unused-result -Wfatal-errors
+    gl x11 
+  QMAKE_CXXFLAGS_WARN_ON += -Wno-unused-result -Wno-unused-parameter \
+                            -Wno-unused-variable -Wno-switch -Wno-comment \
+                            -Wno-unused-but-set-variable
   QMAKE_CXXFLAGS += -DHAVE_OSC
   mapmapfile.files = mapmap
   mapmapfile.path = /usr/bin
@@ -85,12 +135,16 @@ unix:!mac {
   mimetypesfile.files = resources/texts/mapmap.xml 
   mimetypesfile.path = /usr/share/mime/packages
   INSTALLS += mimetypesfile
-  updatemimetypes.path = /usr/share/mime/packages
-  updatemimetypes.commands = update-mime-database /usr/share/mime
-  INSTALLS += updatemimetypes
-  updatemimeappdefault.path = /usr/share/applications
-  updatemimeappdefault.commands='grep mapmap.desktop /usr/share/applications/defaults.list >/dev/null|| sudo echo "application/mapmap=mapmap.desktop;" >> /usr/share/applications/defaults.list'
-  INSTALLS += updatemimeappdefault
+
+# REQUIRES ROOT PRIVILEDGES: (does not comply to the standards of Debian)
+# -------------------------
+# updatemimetypes.path = /usr/share/mime/packages
+# updatemimetypes.commands = update-mime-database /usr/share/mime
+# INSTALLS += updatemimetypes
+# updatemimeappdefault.path = /usr/share/applications
+# updatemimeappdefault.commands='grep mapmap.desktop /usr/share/applications/defaults.list >/dev/null|| sudo echo "application/mapmap=mapmap.desktop;" >> /usr/share/applications/defaults.list'
+# INSTALLS += updatemimeappdefault
+# -------------------------
   
   # Add the docs target:
   docs.depends = $(HEADERS) $(SOURCES)
@@ -112,31 +166,41 @@ mac {
   # This tells qmake not to put the executable inside a bundle.
   # just for reference. Do not uncomment.
   # CONFIG-=app_bundle
+
+  # For OSC support: (if pkg-config was installed)
+  # CONFIG += link_pkgconfig
+  # PKGCONFIG += lo
+
+  LIBS += -L/usr/local/lib -llo
+  INCLUDEPATH += /usr/local/include
+  QMAKE_CXXFLAGS += -DHAVE_OSC
 }
 
 # Windows-specific:
 win32 {
   DEFINES += WIN32
-  INCLUDEPATH += \
-    C:/gstreamer/include \
-    C:/gstreamer/include/libxml2 \
-    C:/gstreamer/include/glib-2.0 \
-    C:/gstreamer/lib/glib-2.0/include \
-    C:/gstreamer/include/gstreamer-0.10
-  LIBS += -L"C:/gstreamer/lib" \
-    -L"C:/gstreamer/bin" \
-    -lgstreamer-0.10 \
-    -lglib-2.0 \
-    -lgmodule-2.0 \
-    -lgobject-2.0 \
-    -lgthread-2.0 \
-    -lgstinterfaces-0.10 \
-    -lopengl32 \
-    -lglu32 \
-    -lglew32
-  # Add console to the CONFIG to see debug messages printed in 
-  # the console on Windows
-  CONFIG += console
+  TARGET = Mapmap
+  GST_HOME = $$quote(C:\gstreamer\1.0\x86)
+  isEmpty(GST_HOME) {
+    message(\"C:\gstreamer\1.0\x86\" not detected ...)
+  }
+
+  INCLUDEPATH += $${GST_HOME}/lib/gstreamer-1.0/include \
+    $${GST_HOME}/include/glib-2.0 \
+    $${GST_HOME}/lib/glib-2.0/include \
+    $${GST_HOME}/include/gstreamer-1.0
+
+  LIBS += $${GST_HOME}/lib/gstapp-1.0.lib \
+    $${GST_HOME}/lib/gstbase-1.0.lib \
+    $${GST_HOME}/lib/gstpbutils-1.0.lib \
+    $${GST_HOME}/lib/gstreamer-1.0.lib \
+    $${GST_HOME}/lib/gobject-2.0.lib \
+    $${GST_HOME}/lib/glib-2.0.lib \
+    -lopengl32
+
+  RC_FILE = mapmap_resource.rc
+
+  QMAKE_CXXFLAGS += -D_USE_MATH_DEFINES
 }
 
 # Adds the tarball target

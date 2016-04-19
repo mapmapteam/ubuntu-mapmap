@@ -24,6 +24,7 @@
 
 #include <QtGlobal>
 #include <QtOpenGL>
+
 #include <string>
 #include <QColor>
 #include <QMutex>
@@ -34,19 +35,21 @@
 #include <GL/gl.h>
 #endif
 
-#include <tr1/memory>
+#include "Element.h"
 
-#include "UidAllocator.h"
+MM_BEGIN_NAMESPACE
 
 /**
  * A Paint is a style that can be applied when drawing potentially any shape.
  * 
  * Defines the way to draw any shape.
- * There must be a Mapper that implements this paint for every shape 
+ * There must be a MappingGui that implements this paint for every shape 
  * so that this shape might be drawn with it.
  */
-class Paint
+class Paint : public Element
 {
+  Q_OBJECT
+
 private:
   static UidAllocator allocator;
 
@@ -56,13 +59,11 @@ protected:
   Paint(uid id=NULL_UID);
 
 public:
-  typedef std::tr1::shared_ptr<Paint> ptr;
+  typedef QSharedPointer<Paint> ptr;
 
   virtual ~Paint();
 
   static const UidAllocator& getUidAllocator() { return allocator; }
-
-  virtual void build() {}
 
   /// This method should be called at each call of draw().
   virtual void update() {}
@@ -82,38 +83,46 @@ public:
   /// Unlocks mutex (default = no effect).
   virtual void unlockMutex() {}
 
-  void setName(const QString& name) { _name = name; }
-  QString getName() const { return _name; }
-  uid getId() const { return _id; }
-
   virtual QString getType() const = 0;
-
-private:
-  QString _name;
 };
 
 class Color : public Paint
 {
+  Q_OBJECT
+
+  Q_PROPERTY(QColor color READ getColor WRITE setColor)
+
 protected:
   QColor color;
 
 public:
-  Color(uid id=NULL_UID) : Paint(id) {}
+  Q_INVOKABLE Color(int id=NULL_UID) : Paint(id) {}
   Color(const QColor& color_, uid id=NULL_UID) : Paint(id), color(color_) {}
 
   QColor getColor() const { return color; }
-  virtual void setColor(const QColor& color_) { color = color_; }
+  void setColor(const QColor& color_) { color = color_; }
 
   virtual QString getType() const { return "color"; }
+
+  virtual QIcon getIcon() const {
+    QPixmap pixmap(100,100);
+    pixmap.fill(color);
+    return QIcon(pixmap);
+  }
 };
 
 /**
- * Paint that uses an OpenGL texture to paint on potentially any Mapper.
+ * Paint that uses an OpenGL texture to paint on potentially any MappingGui.
  * 
  * This video texture is actually an OpenGL texture.
  */
 class Texture : public Paint
 {
+  Q_OBJECT
+
+  Q_PROPERTY(float x READ getX)
+  Q_PROPERTY(float y READ getY)
+
 protected:
   GLuint textureId;
   GLfloat x;
@@ -126,16 +135,19 @@ protected:
     x(0),
     y(0)
   {
-    glGenTextures(1, &textureId);
   }
 
 public:
   virtual ~Texture() {
+    // TODO: this needs to be fixed: it will not work unless it is executed from within a GL context
+    // see issue #229
     if (textureId != 0)
       glDeleteTextures(1, &textureId);
   }
 
 public:
+  virtual void update();
+
   GLuint getTextureId() const { return textureId; }
   virtual int getWidth() const = 0;
   virtual int getHeight() const = 0;
@@ -146,12 +158,30 @@ public:
   /// Returns true iff bits have changed since last call to getBits().
   virtual bool bitsHaveChanged() const = 0;
 
-  virtual void setPosition(GLfloat xPos, GLfloat yPos) {
-    x = xPos;
-    y = yPos;
-  }
   virtual GLfloat getX() const { return x; }
   virtual GLfloat getY() const { return y; }
+
+  virtual void setX(GLfloat xPos) {
+      x = xPos;
+    }
+
+  virtual void setY(GLfloat yPos) {
+      y = yPos;
+    }
+
+  virtual void setPosition(GLfloat xPos, GLfloat yPos) {
+    setX(xPos);
+    setY(yPos);
+  }
+
+  virtual QRectF getRect() const { return QRectF(getX(), getY(), getWidth(), getHeight()); }
+
+  virtual void read(const QDomElement& obj);
+  virtual void write(QDomElement& obj);
+
+protected:
+  // Lists QProperties that should NOT be parsed automatically.
+  virtual QList<QString> _propertiesSpecial() const { return Paint::_propertiesSpecial() << "x" << "y"; }
 };
 
 /**
@@ -159,11 +189,16 @@ public:
  */
 class Image : public Texture
 {
+  Q_OBJECT
+
+  Q_PROPERTY(QString uri READ getUri WRITE setUri)
+
 protected:
-  QString uri;
-  QImage image;
+  QString _uri;
+  QImage _image;
 
 public:
+  Q_INVOKABLE Image(int id=NULL_UID) : Texture(id) {}
   Image(const QString uri_, uid id=NULL_UID) :
     Texture(id)
   {
@@ -173,41 +208,53 @@ public:
   virtual ~Image() {}
 
   virtual void build() {
-    image = QGLWidget::convertToGLFormat(QImage(uri)).mirrored(true, false).transformed(QTransform().rotate(180));
+    _image = QGLWidget::convertToGLFormat(QImage(_uri)).mirrored(true, false).transformed(QTransform().rotate(180));
     bitsChanged = true;
   }
 
-  const QString getUri() const { return uri; }
+  const QString getUri() const { return _uri; }
   bool setUri(const QString &uri);
 
   virtual QString getType() const { return "image"; }
 
-  virtual int getWidth() const { return image.width(); }
-  virtual int getHeight() const { return image.height(); }
+  virtual int getWidth() const { return _image.width(); }
+  virtual int getHeight() const { return _image.height(); }
 
   virtual const uchar* getBits() {
     bitsChanged = false;
-    return image.bits();
+    return _image.bits();
   }
 
   virtual bool bitsHaveChanged() const { return bitsChanged; }
+
+  virtual QIcon getIcon() const { return QIcon(QPixmap::fromImage(_image)); }
 };
 
-class MediaImpl; // forward declaration
+class VideoImpl; // forward declaration
 
 /**
  * Paint that is a Texture retrieved via a video file.
  */
-class Media : public Texture
+class Video : public Texture
 {
-protected:
-  QString uri;
+  Q_OBJECT
+
+  Q_PROPERTY(QString uri READ getUri WRITE setUri)
+
+  Q_PROPERTY(double volume READ getVolume WRITE setVolume)
+  Q_PROPERTY(double rate READ getRate WRITE setRate)
+
 public:
-  Media(const QString uri_, bool live, double rate, uid id=NULL_UID);
-  virtual ~Media();
+  // Thumbnail generation timeout (in ms).
+  static const int ICON_TIMEOUT = 1000;
+
+public:
+  Q_INVOKABLE Video(int id=NULL_UID);
+  Video(const QString uri_, bool live, double rate, uid id=NULL_UID);
+  virtual ~Video();
   const QString getUri() const
   {
-    return uri;
+    return _uri;
   }
   bool setUri(const QString &uri);
   virtual void build();
@@ -238,23 +285,39 @@ public:
   virtual bool bitsHaveChanged() const;
 
   /// Sets playback rate (in %). Negative values mean reverse playback.
-  virtual void setRate(double rate=100.0);
+  virtual void setRate(double rate);
 
   /// Returns playback rate.
   double getRate() const;
 
+  /// Sets audio playback volume (in %).
+  virtual void setVolume(double volume);
+
+  /// Returns audio playback volume.
+  double getVolume() const;
 
   /**
    * Checks whether or not video is supported on this platform.
    */
   static bool hasVideoSupport();
 
-private:
+  virtual QIcon getIcon() const { return _icon; }
+
+protected:
+
+  // Try to generate a thumbnail from currently loaded movie.
+  bool _generateThumbnail();
+
+  QString _uri;
+  QIcon _icon;
+
   /**
    * Private implementation, so that GStreamer headers don't need
    * to be included from every file in the project.
    */
-  MediaImpl * impl_; // PIMPL opaque pointer
+  VideoImpl *_impl;
 };
+
+MM_END_NAMESPACE
 
 #endif /* PAINT_H_ */
