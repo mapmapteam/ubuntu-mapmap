@@ -24,38 +24,49 @@
 #include <QDialog>
 #include <QtGlobal>
 #include <QTimer>
-#include "DestinationGLCanvas.h"
+#include "OutputGLCanvas.h"
+
+MM_BEGIN_NAMESPACE
 
 // TODO: add SLOT for mySetVisible
 // TODO: Maybe improve support for Ubuntu: http://stackoverflow.com/questions/12645880/fullscreen-for-qdialog-from-within-mainwindow-only-working-sometimes
 
+/**
+ * This class acts as the pop-up window containing a copy of the destination canvas (see OutputGLCanvas)
+ * and that can be put to fullscreen. Aside from the fullscreen functionality, it adds the possibility of
+ * removing the cursor and displaying a cross-hair.
+ */
 class OutputGLWindow : public QDialog
 {
   Q_OBJECT
 
 public:
-  OutputGLWindow(MainWindow* mainWindow, QWidget* parent = 0, const QGLWidget * shareWidget = 0);
+  OutputGLWindow(QWidget* parent, const MapperGLCanvas* canvas_);
+  //OutputGLWindow(MainWindow* mainWindow, QWidget* parent = 0, const QGLWidget * shareWidget = 0);
 
 public slots:
   void setFullScreen(bool fullScreen);
-
-protected:
-  void closeEvent(QCloseEvent* event);
+  void updateScreenCount(int nScreens);
+  void setDisplayCrosshair(bool crosshair);
+  void setDisplayTestSignal(bool displayTestSignal);
 
 signals:
   void closed();
-  void fullScreenToggled(bool fullScreen);
 
 public:
-  DestinationGLCanvas* getCanvas() const { return canvas; }
+  MapperGLCanvas* getCanvas() const { return canvas; }
   void setPointerHasMoved();
-  void setCursorVisible(bool visible);
 
 private:
-  DestinationGLCanvas* canvas;
-  QByteArray _geometry;
+  OutputGLCanvas* canvas;
 
-  bool _pointerIsVisible;
+  int _getPreferredScreen() const {
+    return QApplication::desktop()->screenCount()-1;
+  }
+  void _updateToPreferredScreen();
+  bool _is_fullscreen;
 };
+
+MM_END_NAMESPACE
 
 #endif /* OutputGLWINDOW_H_ */

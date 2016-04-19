@@ -22,22 +22,29 @@
 #define MAIN_WINDOW_H_
 
 #include <QtGui>
+#if QT_VERSION >= 0x050000
+  #include <QtWidgets>
+#endif
 #include <QTimer>
 #include <QVariant>
 #include <QMap>
+#include <QMessageLogger>
 
 #include "MM.h"
 
-#include "SourceGLCanvas.h"
+#include "MapperGLCanvas.h"
+#include "MapperGLCanvasToolbar.h"
 #ifdef HAVE_OSC
 #include "OscInterface.h"
 #endif
-#include "DestinationGLCanvas.h"
 
 #include "OutputGLWindow.h"
 #include "PreferencesDialog.h"
+#include "ConsoleWindow.h"
 
 #include "MappingManager.h"
+#include "MappingItemDelegate.h"
+#include "MappingListModel.h"
 
 #include "qtpropertymanager.h"
 #include "qtvariantproperty.h"
@@ -45,6 +52,8 @@
 #include "qtgroupboxpropertybrowser.h"
 
 #include "PaintGui.h"
+
+MM_BEGIN_NAMESPACE
 
 /**
  * This is the main window of MapMap. It acts as both a view and a controller interface.
@@ -66,10 +75,7 @@ public:
 protected:
   // Events ///////////////////////////////////////////////////////////////////////////////////////////////////
   void closeEvent(QCloseEvent *event);
-  bool eventFilter(QObject *obj, QEvent *event);
-
-signals:
-  void paintChanged();
+  void keyPressEvent(QKeyEvent *event);
 
   // Slots ////////////////////////////////////////////////////////////////////////////////////////////////////
 private slots:
@@ -81,37 +87,49 @@ private slots:
   void preferences();
   bool save();
   bool saveAs();
-  void importVideo();
-  void importImage();
+  void importMedia();
   void addColor();
   void about();
   void updateStatusBar();
+  void showMenuBar(bool shown);
   void openRecentFile();
   void clearRecentFileList();
   void openRecentVideo();
+  void quitMapMap();
   // Edit menu.
   void deleteItem();
+  // Context menu for mappings.
+  void duplicateMappingItem();
+  void deleteMappingItem();
+  void renameMappingItem();
+  void setMappingItemLocked(bool locked);
+  void setMappingItemHide(bool hide);
+  void setMappingItemSolo(bool solo);
+  // Context menu for paints
+  void deletePaintItem();
+  void renamePaintItem();
+  void paintListEditEnd(QWidget* editor);
 
   // Widget callbacks.
   void handlePaintItemSelectionChanged();
 //  void handleItemDoubleClicked(QListWidgetItem* item);
-  void handleMappingItemSelectionChanged();
-  void handleMappingItemChanged(QListWidgetItem* item);
+  void handleMappingItemSelectionChanged(const QModelIndex &index);
+  void handleMappingItemChanged(const QModelIndex &index);
   void handleMappingIndexesMoved();
-  void handleItemSelected(QListWidgetItem* item);
+  void handlePaintItemSelected(QListWidgetItem* item);
   void handlePaintChanged(Paint::ptr paint);
+
+  void mappingPropertyChanged(uid id, QString propertyName, QVariant value);
+  void paintPropertyChanged(uid id, QString propertyName, QVariant value);
 
   void addMesh();
   void addTriangle();
   void addEllipse();
 
-  void play();
-  void pause();
-  void rewind();
-
   // Other.
   void windowModified();
   void pollOscInterface();
+  void exitFullScreen();
 
 public slots:
 
@@ -121,11 +139,14 @@ public slots:
   bool clearProject();
 
   /// Create or replace a media paint (or image).
-  uid createMediaPaint(uid paintId, QString uri, float x, float y, bool isImage, bool live=false, double rate=100.0);
+  uid createMediaPaint(uid paintId, QString uri, float x, float y, bool isImage, bool live=false, double rate=1.0);
 
   /// Create or replace a color paint.
   uid createColorPaint(uid paintId, QColor color);
 
+  // TODO: Remove all these unsed fonctions below
+
+  /*======= Start of Unsed fonctions =======*/
   /// Creates a textured mesh.
   uid createMeshTextureMapping(uid mappingId,
                                uid paintId,
@@ -153,9 +174,11 @@ public slots:
                                  uid paintId,
                                  const QVector<QPointF> &dst);
 
+  /// Creates a color ellipse.
   uid createEllipseColorMapping(uid mappingId,
                                 uid paintId,
                                 const QVector<QPointF> &dst);
+  /*======= End of Unsed fonctions =======*/
 
   /// Sets visibility of mapping.
   void setMappingVisible(uid mappingId, bool visible);
@@ -169,15 +192,40 @@ public slots:
   /// Deletes/removes a mapping.
   void deleteMapping(uid mappingId);
 
+  /// Clone/duplicate a mapping
+  void duplicateMapping(uid mappingId);
+
   /// Deletes/removes a paint and all associated mappigns.
-  void deletePaint(uid paintId, bool replace);
+  void deletePaint(uid paintId, bool replace = false);
 
   /// Updates all canvases.
   void updateCanvases();
 
+  // Editing toggles.
+  void enableDisplayControls(bool display);
+  void enableStickyVertices(bool display);
+  void enableTestSignal(bool enable);
+  void displayUndoStack(bool display);
+
+  // Show Mapping Context Menu
+  void showMappingContextMenu(const QPoint &point);
+  // Show Paint Context Menu
+  void showPaintContextMenu(const QPoint &point);
+
+  /// Start playback.
+  void play();
+
+  /// Pause playback.
+  void pause();
+
+  /// Reset playback.
+  void rewind();
+
 public:
   bool setTextureUri(int texture_id, const std::string &uri);
   bool setTextureRate(int texture_id, double rate);
+  bool setTextureVolume(int texture_id, double volume);
+  void setTexturePlayState(int texture_id, bool played);
 
 private:
   // Internal methods. //////////////////////////////////////////////////////////////////////////////////////
@@ -186,7 +234,8 @@ private:
   void createLayout();
   void createActions();
   void createMenus();
-  void createContextMenu();
+  void createMappingContextMenu();
+  void createPaintContextMenu();
   void createToolBars();
   void createStatusBar();
   void updateRecentFileActions();
@@ -214,10 +263,20 @@ public:
   void addPaintItem(uid paintId, const QIcon& icon, const QString& name);
   void updatePaintItem(uid paintId, const QIcon& icon, const QString& name);
   void removePaintItem(uid paintId);
+  void renameMapping(uid mappingId, const QString& name);
+  void renamePaint(uid paintId, const QString& name);
   void clearWindow();
+  // Check if the file exists
+  bool fileExists(const QString& file);
+  // Check if the file is supported
+  bool fileSupported(const QString& file, bool isImage);
+  // Locate the file not found
+  QString locateMediaFile(const QString& uri, bool isImage);
+
+  static MainWindow* instance();
+
   // Returns a short version of filename.
   static QString strippedName(const QString &fullFileName);
-  void setMappingItemVisibility(uid mappingId, bool visible);
 
 private:
   // Connects/disconnects project-specific widgets (paints and mappings).
@@ -229,6 +288,8 @@ private:
   static void setItemId(QListWidgetItem& item, uid id);
   static QListWidgetItem* getItemFromId(const QListWidget& list, uid id);
   static int getItemRowFromId(const QListWidget& list, uid id);
+  uid currentMappingItemId() const;
+
   static QIcon createColorIcon(const QColor& color);
   static QIcon createFileIcon(const QString& filename);
   static QIcon createImageIcon(const QString& filename);
@@ -237,38 +298,49 @@ private:
 
   // Menu actions.
   QMenu *fileMenu;
-//  QMenu *editMenu;
-//  QMenu *selectSubMenu;
-//  QMenu *toolsMenu;
-//  QMenu *optionsMenu;
   QMenu *editMenu;
   QMenu *viewMenu;
-  QMenu *runMenu;
+  QMenu *toolsMenu;
+  QMenu *windowMenu;
+  QMenu *playbackMenu;
   QMenu *helpMenu;
   QMenu *recentFileMenu;
   QMenu *recentVideoMenu;
+  QMenu *mappingContextMenu;
+  QMenu *paintContextMenu;
+  // Some menus when need to be separated
+  QMenu *sourceMenu;
+  QMenu *destinationMenu;
+  QMenu *toolBarsMenu;
 
   // Toolbar.
   QToolBar *mainToolBar;
-  QToolBar *runToolBar;
 
   // Actions.
   QAction *separatorAction;
   QAction *newAction;
   QAction *openAction;
-  QAction *importVideoAction;
-  QAction *importImageAction;
+  QAction *importMediaAction;
   QAction *addColorAction;
   QAction *saveAction;
   QAction *saveAsAction;
   QAction *exitAction;
-//  QAction *cutAction;
-//  QAction *copyAction;
-//  QAction *pasteAction;
-  QAction *deleteAction;
+  QAction *undoAction;
+  QAction *redoAction;
+  // Mappings context menu actions
+  QAction *cloneMappingAction;
+  QAction *deleteMappingAction;
+  QAction *renameMappingAction;
+  QAction *mappingSoloAction;
+  QAction *mappingLockedAction;
+  QAction *mappingHideAction;
+  // Paints context menu action
+  QAction *deletePaintAction;
+  QAction *renamePaintAction;
   QAction *preferencesAction;
   QAction *aboutAction;
   QAction *clearRecentFileActions;
+  QAction *emptyRecentVideos;
 
   QAction *addMeshAction;
   QAction *addTriangleAction;
@@ -278,12 +350,20 @@ private:
   QAction *pauseAction;
   QAction *rewindAction;
 
-  QAction *displayOutputWindow;
-  //QAction *outputWindowHasCursor;
-  QAction *outputWindowFullScreen;
-  QAction *displayCanvasControls;
-  QAction *displayTestSignal;
-  QAction *stickyVertices;
+  QAction *outputFullScreenAction;
+  QAction *displayControlsAction;
+  QAction *displayTestSignalAction;
+  QAction *stickyVerticesAction;
+  QAction *displayUndoStackAction;
+  QAction *displayZoomToolAction;
+  QAction *openConsoleAction;
+  QAction *showMenuBarAction;
+  QAction *showToolBarAction;
+
+  QActionGroup *perspectiveActionGroup;
+  QAction *mainViewAction;
+  QAction *sourceViewAction;
+  QAction *destViewAction;
 
   enum { MaxRecentFiles = 10 };
   enum { MaxRecentVideo = 5 };
@@ -298,12 +378,20 @@ private:
   QStackedWidget* paintPropertyPanel;
 
   QSplitter* mappingSplitter;
-  QListWidget* mappingList;
+  QTableView* mappingList;
   QStackedWidget* mappingPropertyPanel;
 
-  SourceGLCanvas* sourceCanvas;
-  DestinationGLCanvas* destinationCanvas;
+  QUndoView* undoView;
+
+  MapperGLCanvas* sourceCanvas;
+  MapperGLCanvasToolbar* sourceCanvasToolbar;
+  QWidget* sourcePanel;
+  MapperGLCanvas* destinationCanvas;
+  MapperGLCanvasToolbar* destinationCanvasToolbar;
+  QWidget* destinationPanel;
+
   OutputGLWindow* outputWindow;
+  ConsoleWindow* consoleWindow;
 
   QSplitter* mainSplitter;
   QSplitter* canvasSplitter;
@@ -325,6 +413,8 @@ private:
 
   // Model.
   MappingManager* mappingManager;
+  MappingListModel *mappingListModel;
+  MappingItemDelegate *mappingItemDelegate;
 
   // OSC.
 #ifdef HAVE_OSC
@@ -336,7 +426,7 @@ private:
   // View.
 
   // The view counterpart of Mappings.
-  QMap<uid, Mapper::ptr> mappers;
+  QMap<uid, MappingGui::ptr> mappers;
   QMap<uid, PaintGui::ptr> paintGuis;
 
   // Current selected paint/mapping.
@@ -344,21 +434,52 @@ private:
   uid currentMappingId;
   bool _hasCurrentMapping;
   bool _hasCurrentPaint;
+
+  // True iff the play button is currently pressed.
   bool _isPlaying;
+
+  // True iff we are displaying the controls.
+  bool _displayControls;
+
+  // True iff we want vertices to stick to each other.
+  bool _stickyVertices;
+
+  bool _displayUndoStack;
+
+  // Menu bar hidden state
+  bool _showMenuBar;
 
   // Keeps track of the current selected item, wether it's a paint or mapping.
   QListWidgetItem* currentSelectedItem;
+  QModelIndex currentSelectedIndex;
   QTimer *videoTimer;
 
   PreferencesDialog* _preferences_dialog;
 
+  // UndoStack
+  QUndoStack *undoStack;
+
+  // Labels for status bar
+  QLabel *destinationZoomLabel;
+  QLabel *sourceZoomLabel;
+  QLabel *undoLabel;
+  QLabel *currentMessageLabel;
+  QLabel *mousePosLabel;
+
+
 public:
   // Accessor/mutators for the view. ///////////////////////////////////////////////////////////////////
-  MappingManager& getMappingManager() { return *mappingManager; }
-  Mapper::ptr getMapperByMappingId(uint id) { return mappers[id]; }
+  MappingManager& getMappingManager() const { return *mappingManager; }
+
+  MappingGui::ptr getMappingGuiByMappingId(uint id) const { return mappers[id]; }
+  PaintGui::ptr getPaintGuiByPaintId(uint id) const { return paintGuis[id]; }
+
   uid getCurrentPaintId() const { return currentPaintId; }
   uid getCurrentMappingId() const { return currentMappingId; }
-  OutputGLWindow* getOutputWindow() const { return outputWindow; }
+
+  Mapping::ptr getCurrentMapping() const { return mappingManager->getMappingById(currentMappingId); }
+  Paint::ptr getCurrentPaint() const { return mappingManager->getPaintById(currentPaintId); }
+
   bool hasCurrentPaint() const { return _hasCurrentPaint; }
   bool hasCurrentMapping() const { return _hasCurrentMapping; }
   void setCurrentPaint(int uid);
@@ -366,24 +487,41 @@ public:
   void removeCurrentPaint();
   void removeCurrentMapping();
 
+  OutputGLWindow* getOutputWindow() const { return outputWindow; }
+  MapperGLCanvas* getSourceCanvas() const { return sourceCanvas; }
+  MapperGLCanvas* getDestinationCanvas() const { return destinationCanvas; }
+
+  /// Returns true iff we should display the controls.
+  bool displayControls() const { return _displayControls; }
+
+  /// Returns true iff we want vertices to stick to each other.
+  bool stickyVertices() const { return _stickyVertices; }
+
+  // Use the same undoStack for whole program
+  QUndoStack* getUndoStack() const { return undoStack; }
+
   void startFullScreen();
   bool setOscPort(QString portNumber);
   bool setOscPort(int portNumber);
   int getOscPort() const;
+  void setOutputWindowFullScreen(bool enable);
+
 public:
   // Constants. ///////////////////////////////////////////////////////////////////////////////////////
-  static const int DEFAULT_WIDTH = 1600;
-  static const int DEFAULT_HEIGHT = 800;
+  static const int DEFAULT_WIDTH = 1360;
+  static const int DEFAULT_HEIGHT = 768;
   static const int PAINT_LIST_ITEM_HEIGHT = 40;
   static const int SHAPE_LIST_ITEM_HEIGHT = 40;
-  static const int PAINT_LIST_MINIMUM_HEIGHT = 320;
-  static const int MAPPING_LIST_MINIMUM_HEIGHT = 320;
-  static const int PAINT_PROPERTY_PANEL_MINIMUM_HEIGHT = 320;
-  static const int MAPPING_PROPERTY_PANEL_MINIMUM_HEIGHT = 320;
+  static const int PAINT_LIST_MINIMUM_HEIGHT = 290;
+  static const int MAPPING_LIST_MINIMUM_HEIGHT = 290;
+  static const int PAINT_PROPERTY_PANEL_MINIMUM_HEIGHT = 290;
+  static const int MAPPING_PROPERTY_PANEL_MINIMUM_HEIGHT = 290;
   static const int CANVAS_MINIMUM_WIDTH  = 480;
   static const int CANVAS_MINIMUM_HEIGHT = 270;
   static const int OUTPUT_WINDOW_MINIMUM_WIDTH = 480;
   static const int OUTPUT_WINDOW_MINIMUM_HEIGHT = 270;
 };
+
+MM_END_NAMESPACE
 
 #endif /* MAIN_WINDOW_H_ */

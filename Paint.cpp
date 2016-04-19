@@ -19,130 +19,251 @@
  */
 
 #include "Paint.h"
-#include "MediaImpl.h"
+#include "VideoImpl.h"
 #include <iostream>
+
+MM_BEGIN_NAMESPACE
 
 UidAllocator Paint::allocator;
 
-Paint::Paint(uid id)
+void Texture::update()
 {
-  if (id == NULL_UID)
-    id = allocator.allocate();
-  else
+  if (textureId == 0)
   {
-    Q_ASSERT(!allocator.exists(id));
-    allocator.reserve(id);
+    glGenTextures(1, &textureId);
   }
-  // Assign id.
-  _id = id;
+}
+
+void Texture::read(const QDomElement& obj)
+{
+  Paint::read(obj);
+  // Set x and y.
+  QDomElement e;
+  e = obj.firstChildElement("x");
+  if (!e.isNull())
+    setX(e.text().toDouble());
+  e = obj.firstChildElement("y");
+  if (!e.isNull())
+    setY(e.text().toDouble());
+}
+
+void Texture::write(QDomElement& obj)
+{
+  Paint::write(obj);
+  _writeNode(obj, "x", QString::number(getX()));
+  _writeNode(obj, "y", QString::number(getY()));
+}
+
+Paint::Paint(uid id) : Element(id, &allocator)
+{
 }
 
 Paint::~Paint()
 {
-  allocator.free(_id);
+  allocator.free(getId());
 }
 
 bool Image::setUri(const QString &uri)
 {
-  this->uri = uri;
-  build();
-  return true;
+  if (uri != _uri)
+  {
+    _uri = uri;
+    build();
+    _emitPropertyChanged("uri");
+  }
+  return !_image.isNull();
 }
 
 /* Implementation of the Video class */
-
-Media::Media(const QString uri_, bool live, double rate, uid id):
-    Texture(id),
-    uri(uri_),
-    impl_(NULL)
+Video::Video(int id) : Texture(id),
+    _uri(""),
+    _impl(NULL)
 {
-  impl_ = new MediaImpl(uri_, live);
+  _impl = new VideoImpl(false);
+  setRate(1);
+  setVolume(1);
+}
+
+Video::Video(const QString uri_, bool live, double rate, uid id):
+    Texture(id),
+    _uri(""),
+    _impl(NULL)
+{
+  _impl = new VideoImpl(live);
   setRate(rate);
+  setVolume(1);
+  setUri(uri_);
 }
 
 // vertigo
 
-Media::~Media()
+Video::~Video()
 {
-  delete impl_;
+  delete _impl;
 }
 
-void Media::build()
+void Video::build()
 {
-  this->impl_->build();
+  this->_impl->build();
 }
 
-int Media::getWidth() const
+int Video::getWidth() const
 {
-  while (!this->impl_->videoIsConnected());
-  return this->impl_->getWidth();
+  return this->_impl->getWidth();
 }
 
-int Media::getHeight() const
+int Video::getHeight() const
 {
-  while (!this->impl_->videoIsConnected());
-  return this->impl_->getHeight();
+  return this->_impl->getHeight();
 }
 
-void Media::update() {
-  impl_->update();
+void Video::update() {
+  _impl->update();
+  Texture::update();
 }
 
-void Media::play()
+void Video::play()
 {
-  impl_->setPlayState(true);
+  _impl->setPlayState(true);
 }
 
-void Media::pause()
+void Video::pause()
 {
-  impl_->setPlayState(false);
+  _impl->setPlayState(false);
 }
 
-void Media::rewind()
+void Video::rewind()
 {
-  impl_->resetMovie();
+  _impl->resetMovie();
 }
 
-void Media::lockMutex() {
-  impl_->lockMutex();
+void Video::lockMutex() {
+  _impl->lockMutex();
 }
 
-void Media::unlockMutex() {
-  impl_->unlockMutex();
+void Video::unlockMutex() {
+  _impl->unlockMutex();
 }
 
-const uchar* Media::getBits()
+const uchar* Video::getBits()
 {
-  return this->impl_->getBits();
+  return this->_impl->getBits();
 }
 
-bool Media::bitsHaveChanged() const
+bool Video::bitsHaveChanged() const
 {
-  return this->impl_->bitsHaveChanged();
+  return this->_impl->bitsHaveChanged();
 }
 
-void Media::setRate(double rate)
+void Video::setRate(double rate)
 {
-  impl_->setRate(rate / 100.0);
+  if (rate != _impl->getRate())
+  {
+    _impl->setRate(rate);
+    _emitPropertyChanged("rate");
+  }
 }
 
-double Media::getRate() const
+double Video::getRate() const
 {
-  return impl_->getRate() * 100.0;
+  return _impl->getRate();
 }
 
-bool Media::hasVideoSupport()
+void Video::setVolume(double volume)
 {
-  return MediaImpl::hasVideoSupport();
+  if (volume != _impl->getVolume())
+  {
+    _impl->setVolume(volume);
+    _emitPropertyChanged("volume");
+  }
 }
 
-bool Media::setUri(const QString &uri)
+double Video::getVolume() const
 {
-  bool success = false;
-  this->uri = uri;
-  success = this->impl_->loadMovie(uri);
-  if (! success)
-    qDebug() << "Cannot load movie " << uri << "." << endl;
-  return success;
+  return _impl->getVolume();
 }
 
+bool Video::hasVideoSupport()
+{
+  return VideoImpl::hasVideoSupport();
+}
+
+bool Video::setUri(const QString &uri)
+{
+  // Check if we're actually changing the uri.
+  if (uri != _uri)
+  {
+    // Try to load movie.
+    if (!_impl->loadMovie(uri))
+    {
+      qDebug() << "Cannot load movie " << uri << "." << endl;
+      return false;
+    }
+
+    // Set uri.
+    _uri = uri;
+
+    // Try to get thumbnail.
+    // Wait for the first samples to be available to make sure we are ready.
+    if (!_impl->waitForNextBits(1000))
+    {
+      qDebug() << "No bits coming" << endl;
+      return false;
+    }
+
+    if (!_generateThumbnail())
+      qDebug() << "Could not generate thumbnail for " << uri << ": using generic icon." << endl;
+
+    _emitPropertyChanged("uri");
+  }
+
+  // Return success.
+  return true;
+}
+
+bool Video::_generateThumbnail()
+{
+  static QFileIconProvider provider;
+
+  // Default (in case seeking and loading don't work).
+  _icon = provider.icon(QFileInfo(_uri));
+
+  // Try seeking to the middle of the movie.
+  if (!_impl->seekTo(0.5))
+  {
+    _impl->resetMovie();
+    return false;
+  }
+
+  // Try to get a sample from the current position.
+  // NOTE: There is no guarantee the sample has yet been acquired.
+  const uchar* bits;
+  if (!_impl->waitForNextBits(ICON_TIMEOUT, &bits))
+  {
+    qDebug() << "Second waiting wrong..." << endl;
+    return false;
+  }
+
+  // Copy bits into thumbnail QImage.
+  QImage thumbnail(getWidth(), getHeight(), QImage::Format_ARGB32);
+  for (int y=0; y<getHeight(); y++)
+    for (int x=0; x<getWidth(); x++)
+    {
+      // Transfer RGBA to ARGB.
+      uint r = *bits++;
+      uint b = *bits++;
+      uint g = *bits++;
+      bits++; // skip alpha
+      thumbnail.setPixel(x, y, qRgb(r, g, b));
+    }
+
+  // Generate icon.
+  _icon = QIcon(QPixmap::fromImage(thumbnail));
+
+  // Reset movie.
+  _impl->resetMovie();
+
+  return true;
+}
+
+MM_END_NAMESPACE

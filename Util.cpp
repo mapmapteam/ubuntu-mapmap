@@ -26,6 +26,8 @@
 #include <iostream>
 #include <QRegExp>
 
+MM_BEGIN_NAMESPACE
+
 namespace Util {
 
 void correctGlTexCoord(GLfloat x, GLfloat y)
@@ -150,11 +152,15 @@ Ellipse* createEllipseForColor(int frameWidth, int frameHeight)
   );
 }
 
-void drawControlsVertex(QPainter* painter, const QPointF& vertex, bool selected, qreal radius, qreal strokeWidth)
+void drawControlsVertex(QPainter* painter, const QPointF& vertex, bool selected, bool locked, qreal radius, qreal strokeWidth)
 {
   // Init colors and stroke.
-  painter->setBrush(selected ? MM::VERTEX_SELECTED_BACKGROUND : MM::VERTEX_BACKGROUND);
-  painter->setPen(QPen(MM::CONTROL_COLOR, strokeWidth));
+  if (locked)
+    painter->setBrush(MM::VERTEX_LOCKED_BACKGROUND);
+  else
+    painter->setBrush(selected ? MM::VERTEX_SELECTED_BACKGROUND : MM::VERTEX_BACKGROUND);
+
+  painter->setPen(locked ? QPen(MM::CONTROL_LOCKED_COLOR) : QPen(MM::CONTROL_COLOR, strokeWidth));
 
   // Draw ellipse.
   painter->drawEllipse(vertex, radius, radius);
@@ -163,83 +169,6 @@ void drawControlsVertex(QPainter* painter, const QPointF& vertex, bool selected,
   qreal offset = sin(M_PI/4) * radius;
   painter->drawLine( vertex + QPointF(offset, offset),  vertex + QPointF(-offset, -offset) );
   painter->drawLine( vertex + QPointF(offset, -offset), vertex + QPointF(-offset, offset) );
-}
-
-void drawControlsVertices(QPainter* painter, const QList<int>* selectedVertices, const Shape& shape)
-{
-  if (!selectedVertices)
-    for (int i=0; i<shape.nVertices(); i++)
-      drawControlsVertex(painter, shape.getVertex(i), false);
-  else
-    for (int i=0; i<shape.nVertices(); i++)
-      drawControlsVertex(painter, shape.getVertex(i), selectedVertices->contains(i));
-}
-
-void drawControlsEllipse(QPainter* painter, const QList<int>* selectedVertices, const Ellipse& ellipse)
-{
-  // Init colors and stroke.
-  painter->setPen(MM::SHAPE_STROKE);
-  painter->setBrush(Qt::NoBrush);
-
-  // Draw ellipse contour.
-  qreal rotation = ellipse.getRotation();
-
-  painter->save(); // save painter state
-
-  painter->resetTransform();
-  const QPointF& center = ellipse.getCenter();
-  painter->translate(center);
-  painter->rotate(rotation);
-  painter->drawEllipse(QPointF(0,0), ellipse.getHorizontalRadius(), ellipse.getVerticalRadius());
-
-  painter->restore(); // restore saved painter state
-
-  // Draw control points.
-  drawControlsVertices(painter, selectedVertices, ellipse);
-}
-
-void drawControlsQuad(QPainter* painter, const QList<int>* selectedVertices, const Quad& quad)
-{
-  // Init colors and stroke.
-  painter->setPen(MM::SHAPE_STROKE);
-
-  // Draw quad.
-  painter->drawPolygon(quad.toPolygon());
-
-  // Draw control points.
-  drawControlsVertices(painter, selectedVertices, quad);
-}
-
-void drawControlsMesh(QPainter* painter, const QList<int>* selectedVertices, const Mesh& mesh)
-{
-  // Init colors and stroke.
-  painter->setPen(MM::SHAPE_INNER_STROKE);
-
-  // Draw inner quads.
-  QVector<Quad> quads = mesh.getQuads();
-  for (QVector<Quad>::const_iterator it = quads.begin(); it != quads.end(); ++it)
-  {
-    painter->drawPolygon(it->toPolygon());
-  }
-
-  // Draw outer quad.
-  painter->setPen(MM::SHAPE_STROKE);
-  painter->drawPolygon(mesh.toPolygon());
-
-  // Draw control points.
-  drawControlsVertices(painter, selectedVertices, mesh);
-}
-
-void drawControlsPolygon(QPainter* painter, const QList<int>* selectedVertices, const Polygon& polygon)
-{
-  // Init colors and stroke.
-   painter->setPen(MM::SHAPE_STROKE);
-
-   // Draw inner quads.
-   painter->drawPolygon(polygon.toPolygon());
-
-   // Draw control points.
-   drawControlsVertices(painter, selectedVertices, polygon);
 }
 
 bool fileExists(const QString& filename)
@@ -276,7 +205,7 @@ bool eraseSettings()
   }
   else
   {
-    std::cout << "Erase MapMap settings." << std::endl;
+    qDebug() << "Erase MapMap settings.";
     settingsFile.close();
     return settingsFile.remove();
   }
@@ -290,3 +219,4 @@ bool isNumeric(const QString& text)
 
 } // end of namespace
 
+MM_END_NAMESPACE

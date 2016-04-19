@@ -19,6 +19,8 @@
 
 #include <PaintGui.h>
 
+MM_BEGIN_NAMESPACE
+
 PaintGui::PaintGui(Paint::ptr paint)
   : _paint(paint)
 {
@@ -36,6 +38,14 @@ PaintGui::PaintGui(Paint::ptr paint)
           this,            SLOT(setValue(QtProperty*, const QVariant&)));
 
   _propertyBrowser->addProperty(_topItem);
+
+  // Paint basic properties.
+  _opacityItem = _variantManager->addProperty(QVariant::Double, QObject::tr("Opacity (%)"));
+  _opacityItem->setAttribute("minimum", 0.0);
+  _opacityItem->setAttribute("maximum", 100.0);
+  _opacityItem->setAttribute("decimals", 1);
+  _opacityItem->setValue(_paint->getOpacity()*100.0);
+  _topItem->addSubProperty(_opacityItem);
 }
 
 PaintGui::~PaintGui()
@@ -48,10 +58,29 @@ QWidget* PaintGui::getPropertiesEditor()
   return _propertyBrowser;
 }
 
+void PaintGui::setValue(QtProperty* property, const QVariant& value)
+{
+  if (property == _opacityItem)
+  {
+    double opacity = qBound(value.toDouble() / 100.0, 0.0, 1.0);
+    if (opacity != _paint->getOpacity())
+    {
+      _paint->setOpacity(opacity);
+      emit valueChanged(_paint);
+    }
+  }
+}
+
+void PaintGui::setValue(QString propertyName, QVariant value)
+{
+  if (propertyName == "opacity")
+    _opacityItem->setValue(value.toDouble() * 100);
+}
+
 ColorGui::ColorGui(Paint::ptr paint)
   : PaintGui(paint)
 {
-  color = std::tr1::static_pointer_cast<Color>(paint);
+  color = qSharedPointerCast<Color>(paint);
   Q_CHECK_PTR(color);
 
   _colorItem = _variantManager->addProperty(QVariant::Color,
@@ -67,6 +96,16 @@ void ColorGui::setValue(QtProperty* property, const QVariant& value) {
     color->setColor(value.value<QColor>());
     emit valueChanged(_paint);
   }
+  else
+    PaintGui::setValue(property, value);
+}
+
+void ColorGui::setValue(QString propertyName, QVariant value)
+{
+  if (propertyName == "color")
+    setValue(_colorItem, value);
+  else
+    PaintGui::setValue(propertyName, value);
 }
 
 TextureGui::TextureGui(Paint::ptr paint) : PaintGui(paint) {
@@ -75,7 +114,7 @@ TextureGui::TextureGui(Paint::ptr paint) : PaintGui(paint) {
 ImageGui::ImageGui(Paint::ptr paint)
   : TextureGui(paint)
 {
-  image = std::tr1::static_pointer_cast<Image>(paint);
+  image = qSharedPointerCast<Image>(paint);
   Q_CHECK_PTR(image);
 
 _imageFileItem = _variantManager->addProperty(VariantManager::filePathTypeId(),
@@ -92,27 +131,44 @@ void ImageGui::setValue(QtProperty* property, const QVariant& value) {
     image->setUri(value.toString());
     emit valueChanged(_paint);
   }
+  else
+    TextureGui::setValue(property, value);
 }
 
-MediaGui::MediaGui(Paint::ptr paint)
+void ImageGui::setValue(QString propertyName, QVariant value)
+{
+  if (propertyName == "uri")
+    _imageFileItem->setValue(value);
+  else
+    TextureGui::setValue(propertyName, value);
+}
+
+VideoGui::VideoGui(Paint::ptr paint)
 : TextureGui(paint)
 {
-  media = std::tr1::static_pointer_cast<Media>(paint);
+  media = qSharedPointerCast<Video>(paint);
   Q_CHECK_PTR(media);
 
   _mediaFileItem = _variantManager->addProperty(VariantManager::filePathTypeId(),
-                                                tr("Media file"));
+                                                tr("Video file"));
 
   _mediaFileItem->setAttribute("filter", tr("Video files (%1);;All files (*)").arg(MM::VIDEO_FILES_FILTER));
   _mediaFileItem->setValue(media->getUri());
 
   _mediaRateItem = _variantManager->addProperty(QVariant::Double,
                                                 tr("Speed (%)"));
-
-  double rate = media->getRate(); // we need to save it because the call to setAttribute will set it to minimum
-  _mediaRateItem->setAttribute("minimum", 1);
+  // we need to save it because the call to setAttribute will set it to minimum
+  double rate = media->getRate()*100;
   _mediaRateItem->setAttribute("decimals", 1);
   _mediaRateItem->setValue(rate);
+  
+  _mediaVolumeItem = _variantManager->addProperty(QVariant::Double,
+                                                tr("Volume (%)"));
+  double volume = media->getVolume()*100;
+  _mediaVolumeItem->setAttribute("minimum", 0.0);
+  _mediaVolumeItem->setAttribute("maximum", 100.0);
+  _mediaVolumeItem->setAttribute("decimals", 1);
+  _mediaVolumeItem->setValue(volume);
 
 //  _mediaReverseItem = _variantManager->addProperty(QVariant::Bool,
 //                                                tr("Reverse"));
@@ -120,28 +176,48 @@ MediaGui::MediaGui(Paint::ptr paint)
 
   _topItem->addSubProperty(_mediaFileItem);
   _topItem->addSubProperty(_mediaRateItem);
+  _topItem->addSubProperty(_mediaVolumeItem);
 //  _topItem->addSubProperty(_mediaReverseItem);
 }
 
-void MediaGui::setValue(QtProperty* property, const QVariant& value)
+void VideoGui::setValue(QtProperty* property, const QVariant& value)
 {
   if (property == _mediaFileItem)
   {
     media->setUri(value.toString());
     emit valueChanged(_paint);
   }
-  else {
-    if (property == _mediaRateItem)
-    {
-      double rateSign = (media->getRate() <= 0 ? -1 : +1);
-      media->setRate(value.toDouble());
-      emit valueChanged(_paint);
-    }
+  else if (property == _mediaRateItem)
+  {
+    //double rateSign = (media->getRate() <= 0 ? -1 : +1);
+    media->setRate(value.toDouble()/100.0);
+    emit valueChanged(_paint);
+  }
 //    else if (property == _mediaReverseItem)
 //    {
 //      double absoluteRate = abs( media->getRate() );
 //      media->setRate( (value.toBool() ? -1 : +1) * absoluteRate );
 //      emit valueChanged(_paint);
 //    }
+  else if (property == _mediaVolumeItem)
+  {
+    media->setVolume(value.toDouble()/100.0);
+    emit valueChanged(_paint);
   }
+  else
+    TextureGui::setValue(property, value);
 }
+
+void VideoGui::setValue(QString propertyName, QVariant value)
+{
+  if (propertyName == "uri")
+    _mediaFileItem->setValue(value);
+  if (propertyName == "rate")
+    _mediaRateItem->setValue(value.toDouble()*100);
+  if (propertyName == "volume")
+    _mediaVolumeItem->setValue(value.toDouble()*100);
+  else
+    TextureGui::setValue(propertyName, value);
+}
+
+MM_END_NAMESPACE

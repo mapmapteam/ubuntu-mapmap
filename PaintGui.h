@@ -29,8 +29,6 @@
 #include <GL/gl.h>
 #endif
 
-#include <tr1/memory>
-
 #include "MM.h"
 
 #include "Paint.h"
@@ -44,11 +42,19 @@
 #include "variantmanager.h"
 #include "variantfactory.h"
 
+MM_BEGIN_NAMESPACE
+
+/**
+ * The view components corresponding to a Paint (which is the model) in the interface.
+ * Mainly manages the property browser for the Paint.
+ *
+ * In other words the PaintGui is to Paint what MappingGui is to Mapping.
+ */
 class PaintGui : public QObject {
   Q_OBJECT
 
 public:
-  typedef std::tr1::shared_ptr<PaintGui> ptr;
+  typedef QSharedPointer<PaintGui> ptr;
 
 public:
   // TODO: should be protected
@@ -61,10 +67,8 @@ public:
   virtual QWidget* getPropertiesEditor();
 
 public slots:
-  virtual void setValue(QtProperty* property, const QVariant& value) {
-    Q_UNUSED(property);
-    Q_UNUSED(value);
-  }
+  virtual void setValue(QtProperty* property, const QVariant& value);
+  virtual void setValue(QString propertyName, QVariant value);
 
 signals:
   void valueChanged(Paint::ptr);
@@ -75,6 +79,7 @@ protected:
   QtVariantEditorFactory* _variantFactory;
   QtVariantPropertyManager* _variantManager;
   QtProperty* _topItem;
+  QtVariantProperty* _opacityItem;
 };
 
 class ColorGui : public PaintGui {
@@ -86,9 +91,10 @@ public:
 
 public slots:
   virtual void setValue(QtProperty* property, const QVariant& value);
+  virtual void setValue(QString propertyName, QVariant value);
 
 protected:
-  std::tr1::shared_ptr<Color> color;
+  QSharedPointer<Color> color;
   QtVariantProperty* _colorItem;
 };
 
@@ -98,9 +104,6 @@ class TextureGui : public PaintGui {
 public:
   TextureGui(Paint::ptr paint);
   virtual ~TextureGui() {}
-
-public slots:
-  virtual void setValue(QtProperty* property, const QVariant& value) = 0;
 };
 
 class ImageGui : public TextureGui {
@@ -112,27 +115,32 @@ public:
 
 public slots:
   virtual void setValue(QtProperty* property, const QVariant& value);
+  virtual void setValue(QString propertyName, QVariant value);
 
 protected:
-  std::tr1::shared_ptr<Image> image;
+  QSharedPointer<Image> image;
   QtVariantProperty* _imageFileItem;
 };
 
-class MediaGui : public TextureGui {
+class VideoGui : public TextureGui {
   Q_OBJECT
 
 public:
-  MediaGui(Paint::ptr paint);
-  virtual ~MediaGui() {}
+  VideoGui(Paint::ptr paint);
+  virtual ~VideoGui() {}
 
 public slots:
   virtual void setValue(QtProperty* property, const QVariant& value);
+  virtual void setValue(QString propertyName, QVariant value);
 
 protected:
-  std::tr1::shared_ptr<Media> media;
+  QSharedPointer<Video> media;
   QtVariantProperty* _mediaFileItem;
   QtVariantProperty* _mediaRateItem;
+  QtVariantProperty* _mediaVolumeItem;
 //  QtVariantProperty* _mediaReverseItem;
 };
+
+MM_END_NAMESPACE
 
 #endif /* PAINTGUI_H_ */

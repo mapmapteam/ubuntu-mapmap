@@ -27,6 +27,8 @@
 #include "Paint.h"
 #include "Mapping.h"
 
+MM_BEGIN_NAMESPACE
+
 /**
  * This is a container class for all the paints and mappings ie. the main model object that allows
  * CRUD over paints and mappings.
@@ -100,9 +102,15 @@ public:
   /// Reorders the mappings according to given list of uids. QVector needs to
   void reorderMappings(QVector<uid> mappingIds);
 
+  /// Returns the ordered list of visible mappings, using both the "visible" and "solo" properties.
   QVector<Mapping::ptr> getVisibleMappings() const;
+
+  /// Returns true iff the mapping is visible.
+  bool mappingIsVisible(Mapping::ptr mapping) const;
 
   void clearAll();
 };
+
+MM_END_NAMESPACE
 
 #endif /* MAPPINGMANAGER_H_ */
