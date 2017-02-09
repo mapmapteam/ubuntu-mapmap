@@ -13,6 +13,7 @@ Build-Depends:
  libgstreamer1.0-dev,
  liblo-dev,
  libqt5opengl5-dev,
+ libqt5multimedia5,
  libtool,
  pkg-config,
  qt5-default,
