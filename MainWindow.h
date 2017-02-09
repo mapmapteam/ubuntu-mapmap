@@ -3,6 +3,7 @@
  *
  * (c) 2013 Sofian Audry -- info(@)sofianaudry(.)com
  * (c) 2013 Alexandre Quessy -- alexandre(@)quessy(.)net
+ * (c) 2014 Dame Diongue -- baydamd(@)gmail(.)com
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,10 +23,12 @@
 #define MAIN_WINDOW_H_
 
 #include <QtGui>
-#if QT_VERSION >= 0x050000
+#if QT_VERSION >= 0x050500
   #include <QtWidgets>
+  #include <QCameraInfo>
 #endif
 #include <QTimer>
+#include <QElapsedTimer>
 #include <QVariant>
 #include <QMap>
 #include <QMessageLogger>
@@ -39,7 +42,6 @@
 #endif
 
 #include "OutputGLWindow.h"
-#include "PreferencesDialog.h"
 #include "ConsoleWindow.h"
 
 #include "MappingManager.h"
@@ -53,7 +55,10 @@
 
 #include "PaintGui.h"
 
-MM_BEGIN_NAMESPACE
+namespace mmp {
+
+class PreferenceDialog;
+class AboutDialog;
 
 /**
  * This is the main window of MapMap. It acts as both a view and a controller interface.
@@ -76,6 +81,7 @@ protected:
   // Events ///////////////////////////////////////////////////////////////////////////////////////////////////
   void closeEvent(QCloseEvent *event);
   void keyPressEvent(QKeyEvent *event);
+  bool eventFilter(QObject *object, QEvent *event);
 
   // Slots ////////////////////////////////////////////////////////////////////////////////////////////////////
 private slots:
@@ -84,10 +90,10 @@ private slots:
   // File menu.
   void newFile();
   void open();
-  void preferences();
   bool save();
   bool saveAs();
   void importMedia();
+  void openCameraDevice();
   void addColor();
   void about();
   void updateStatusBar();
@@ -109,6 +115,9 @@ private slots:
   void deletePaintItem();
   void renamePaintItem();
   void paintListEditEnd(QWidget* editor);
+  // Output menu
+  void setupOutputScreen();
+  void updateScreenCount();
 
   // Widget callbacks.
   void handlePaintItemSelectionChanged();
@@ -131,6 +140,18 @@ private slots:
   void pollOscInterface();
   void exitFullScreen();
 
+  // Some help links
+  void documentation() { QDesktopServices::openUrl(
+          QUrl("http://mapmap.info/tiki-index.php?page=Documentation#section-documentation")); }
+  // Send us feedback
+  void sendFeedback() { QDesktopServices::openUrl(QUrl("mailto:mapmap-list@mapmap.info")); }
+  // Technical support
+  void technicalSupport() { QDesktopServices::openUrl(
+          QUrl("http://mapmap.info/tiki-index.php?page=HomePage#section-support")); }
+  // Report an issues
+  void reportBug() { QDesktopServices::openUrl(
+          QUrl("https://github.com/mapmapteam/mapmap/issues/new")); }
+
 public slots:
 
   // CRUD.
@@ -139,7 +160,7 @@ public slots:
   bool clearProject();
 
   /// Create or replace a media paint (or image).
-  uid createMediaPaint(uid paintId, QString uri, float x, float y, bool isImage, bool live=false, double rate=1.0);
+  uid createMediaPaint(uid paintId, QString uri, float x, float y, bool isImage, VideoType type, double rate=1.0);
 
   /// Create or replace a color paint.
   uid createColorPaint(uid paintId, QColor color);
@@ -201,11 +222,24 @@ public slots:
   /// Updates all canvases.
   void updateCanvases();
 
+  /**
+   * This function is triggered framesPerSeconds() times per second. It makes sure
+   * the image is refreshed (updateCanvases()) and performs other necessary operations.
+   */
+  void processFrame();
+
+  /**
+   * Performs operations related to the playing state, such as making sure to play only paints
+   * that are visible.
+   */
+  void updatePlayingState();
+
   // Editing toggles.
+  void setFramesPerSecond(qreal fps);
   void enableDisplayControls(bool display);
+  void enableDisplayPaintControls(bool display);
   void enableStickyVertices(bool display);
-  void enableTestSignal(bool enable);
-  void displayUndoStack(bool display);
+  void displayUndoHistory(bool display);
 
   // Show Mapping Context Menu
   void showMappingContextMenu(const QPoint &point);
@@ -213,19 +247,13 @@ public slots:
   void showPaintContextMenu(const QPoint &point);
 
   /// Start playback.
-  void play();
+  void play(bool updatePlayPauseActions=true);
 
   /// Pause playback.
-  void pause();
+  void pause(bool updatePlayPauseActions=true);
 
   /// Reset playback.
   void rewind();
-
-public:
-  bool setTextureUri(int texture_id, const std::string &uri);
-  bool setTextureRate(int texture_id, double rate);
-  bool setTextureVolume(int texture_id, double volume);
-  void setTexturePlayState(int texture_id, bool played);
 
 private:
   // Internal methods. //////////////////////////////////////////////////////////////////////////////////////
@@ -240,6 +268,7 @@ private:
   void createStatusBar();
   void updateRecentFileActions();
   void updateRecentVideoActions();
+  void updateScreenActions();
 
   // Settings.
   void readSettings();
@@ -273,10 +302,13 @@ public:
   // Locate the file not found
   QString locateMediaFile(const QString& uri, bool isImage);
 
-  static MainWindow* instance();
+  static MainWindow* window();
 
   // Returns a short version of filename.
   static QString strippedName(const QString &fullFileName);
+
+  // Returns the paint icon depending on play/pause state.
+  static const QIcon getPaintIcon(Paint::ptr paint);
 
 private:
   // Connects/disconnects project-specific widgets (paints and mappings).
@@ -299,19 +331,21 @@ private:
   // Menu actions.
   QMenu *fileMenu;
   QMenu *editMenu;
-  QMenu *viewMenu;
   QMenu *toolsMenu;
+  QMenu *viewMenu;
   QMenu *windowMenu;
-  QMenu *playbackMenu;
   QMenu *helpMenu;
+
+  // Sub-menus.
+  QMenu *outputScreenMenu;
   QMenu *recentFileMenu;
   QMenu *recentVideoMenu;
   QMenu *mappingContextMenu;
   QMenu *paintContextMenu;
+
   // Some menus when need to be separated
   QMenu *sourceMenu;
   QMenu *destinationMenu;
-  QMenu *toolBarsMenu;
 
   // Toolbar.
   QToolBar *mainToolBar;
@@ -321,6 +355,7 @@ private:
   QAction *newAction;
   QAction *openAction;
   QAction *importMediaAction;
+  QAction *openCameraAction;
   QAction *addColorAction;
   QAction *saveAction;
   QAction *saveAsAction;
@@ -352,9 +387,10 @@ private:
 
   QAction *outputFullScreenAction;
   QAction *displayControlsAction;
+  QAction *displayPaintControlsAction;
   QAction *displayTestSignalAction;
   QAction *stickyVerticesAction;
-  QAction *displayUndoStackAction;
+  QAction *displayUndoHistoryAction;
   QAction *displayZoomToolAction;
   QAction *openConsoleAction;
   QAction *showMenuBarAction;
@@ -369,6 +405,16 @@ private:
   enum { MaxRecentVideo = 5 };
   QAction *recentFileActions[MaxRecentFiles];
   QAction *recentVideoActions[MaxRecentVideo];
+
+  // help actions
+  QAction *bugReportAction;
+  QAction *supportAction;
+  QAction *docAction;
+  QAction *feedbackAction;
+
+  // Screen output action
+  QList<QAction *> screenActions;
+  QActionGroup *screenActionGroup;
 
   // Widgets and layout.
   QTabWidget* contentTab;
@@ -420,7 +466,7 @@ private:
 #ifdef HAVE_OSC
   OscInterface::ptr osc_interface;
 #endif
-  int config_osc_receive_port;
+  int oscListeningPort;
   QTimer *osc_timer;
 
   // View.
@@ -435,11 +481,17 @@ private:
   bool _hasCurrentMapping;
   bool _hasCurrentPaint;
 
+  // Number of frames per second.
+  qreal _framesPerSecond;
+
   // True iff the play button is currently pressed.
   bool _isPlaying;
 
   // True iff we are displaying the controls.
   bool _displayControls;
+
+  // True iff we are displaying the borders of all controls of all shapes related to a paint.
+  bool _displayPaintControls;
 
   // True iff we want vertices to stick to each other.
   bool _stickyVertices;
@@ -453,8 +505,11 @@ private:
   QListWidgetItem* currentSelectedItem;
   QModelIndex currentSelectedIndex;
   QTimer *videoTimer;
-
-  PreferencesDialog* _preferences_dialog;
+  QElapsedTimer *systemTimer;
+  // Preference dialog
+  PreferenceDialog* _preferenceDialog;
+  // About dialog
+  AboutDialog *_aboutDialog;
 
   // UndoStack
   QUndoStack *undoStack;
@@ -462,10 +517,10 @@ private:
   // Labels for status bar
   QLabel *destinationZoomLabel;
   QLabel *sourceZoomLabel;
-  QLabel *undoLabel;
+  QLabel *lastActionLabel;
   QLabel *currentMessageLabel;
   QLabel *mousePosLabel;
-
+  QLabel *trueFramesPerSecondsLabel;
 
 public:
   // Accessor/mutators for the view. ///////////////////////////////////////////////////////////////////
@@ -490,12 +545,22 @@ public:
   OutputGLWindow* getOutputWindow() const { return outputWindow; }
   MapperGLCanvas* getSourceCanvas() const { return sourceCanvas; }
   MapperGLCanvas* getDestinationCanvas() const { return destinationCanvas; }
+  int getPreferredScreen() const { return outputWindow->getPreferredScreen(); }
+
+  /// Returns the number of frames per second.
+  qreal framesPerSecond() const { return _framesPerSecond; }
+
+  /// Returns true iff MapMap is currently playing (ie. not in pause).
+  bool isPlaying() const { return _isPlaying; }
 
   /// Returns true iff we should display the controls.
   bool displayControls() const { return _displayControls; }
 
+  /// Returns true iff we should display all of the shapes related to a paint.
+  bool displayPaintControls() const { return _displayPaintControls; }
+
   /// Returns true iff we want vertices to stick to each other.
-  bool stickyVertices() const { return _stickyVertices; }
+  bool isStickyVertices() const { return _stickyVertices; }
 
   // Use the same undoStack for whole program
   QUndoStack* getUndoStack() const { return undoStack; }
@@ -522,6 +587,6 @@ public:
   static const int OUTPUT_WINDOW_MINIMUM_HEIGHT = 270;
 };
 
-MM_END_NAMESPACE
+}
 
 #endif /* MAIN_WINDOW_H_ */

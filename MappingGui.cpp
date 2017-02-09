@@ -20,7 +20,7 @@
 
 #include "MappingGui.h"
 
-MM_BEGIN_NAMESPACE
+namespace mmp {
 
 MappingGui::MappingGui(Mapping::ptr mapping)
   : _mapping(mapping),
@@ -149,6 +149,41 @@ ColorMappingGui::ColorMappingGui(Mapping::ptr mapping)
 
 PolygonColorMappingGui::PolygonColorMappingGui(Mapping::ptr mapping) : ColorMappingGui(mapping) {
   _graphicsItem.reset(new PolygonColorGraphicsItem(mapping, true));
+}
+
+MeshColorMappingGui::MeshColorMappingGui(Mapping::ptr mapping)
+  : PolygonColorMappingGui(mapping)
+{
+  _graphicsItem.reset(new MeshColorGraphicsItem(_mapping, true));
+
+  // Add mesh sub property.
+  QSharedPointer<Mesh> mesh = qSharedPointerCast<Mesh>(_mapping->getShape());
+  _meshItem = _variantManager->addProperty(QVariant::Size, QObject::tr("Dimensions"));
+  _meshItem->setValue(QSize(mesh->nColumns(), mesh->nRows()));
+  _meshItem->setAttribute("minimum", QSize(2,2));
+  _topItem->insertSubProperty(_meshItem, _opacityItem); // insert at the beginning
+}
+
+void MeshColorMappingGui::setValue(QtProperty* property, const QVariant& value)
+{
+  if (property == _meshItem)
+  {
+    QSharedPointer<Mesh> mesh = qSharedPointerCast<Mesh>(_mapping->getShape());
+    QSize size = (static_cast<QtVariantProperty*>(property))->value().toSize();
+    if (mesh->nColumns() != size.width() || mesh->nRows() != size.height())
+    {
+      mesh->resize(size.width(), size.height());
+
+//      _graphicsItem->resetVertices();
+//      _inputGraphicsItem->resetVertices();
+
+      // TODO: here we need to create the graphicsitems
+
+      emit valueChanged();
+    }
+  }
+  else
+    PolygonColorMappingGui::setValue(property, value);
 }
 
 EllipseColorMappingGui::EllipseColorMappingGui(Mapping::ptr mapping) : ColorMappingGui(mapping) {
@@ -393,4 +428,4 @@ EllipseTextureMappingGui::EllipseTextureMappingGui(QSharedPointer<TextureMapping
   _inputGraphicsItem.reset(new EllipseTextureGraphicsItem(_mapping, false));
 }
 
-MM_END_NAMESPACE
+}

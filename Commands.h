@@ -25,7 +25,7 @@
 #include <QUndoCommand>
 #include "MM.h"
 
-MM_BEGIN_NAMESPACE
+namespace mmp {
 
 enum CommandId {
   CMD_KEY_MOVE_VERTEX,
@@ -65,6 +65,13 @@ private:
   MainWindow *_mainWindow;
   Mapping::ptr _mapping;
   uid _mappingId;
+};
+
+class DuplicateShapesCommand : public AddShapesCommand
+{
+public:
+  explicit DuplicateShapesCommand(MainWindow *mainWindow, uid cloneId, QUndoCommand *parent = 0);
+
 };
 
 class TransformShapeCommand : public QUndoCommand
@@ -157,6 +164,6 @@ private:
   uid _mappingId;
 };
 
-MM_END_NAMESPACE
+}
 
 #endif /* COMMANDS_H_ */

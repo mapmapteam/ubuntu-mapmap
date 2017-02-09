@@ -25,7 +25,7 @@
 #include "MM.h"
 #include <QFont>
 
-MM_BEGIN_NAMESPACE
+namespace mmp {
 
 class ConsoleWindow : public QMainWindow
 {
@@ -62,6 +62,9 @@ private:
   void createActions();
   void createMenu();
 
+  // Write log file
+  void writeLogFile(const QString &message);
+
   // Actions
   QAction *quitAction;
 
@@ -73,6 +76,6 @@ private:
   static const int CONSOLE_WINDOW_DEFAULT_HEIGHT = 480;
 };
 
-MM_END_NAMESPACE
+}
 
 #endif // CONSOLE_H

@@ -9,7 +9,7 @@
 
 GST_DEBUG=2 \
 LANG=C \
-gst-launch -v decklinksrc mode=3 connection=5 ! \
-    ffmpegcolorspace ! \
-    xvimagesink sync=false
-
+sudo gst-launch-1.0 -v decklinksrc mode=3 connection=5 ! \
+    videoconvert ! \
+    xvimagesink
+# sync=false

@@ -3,6 +3,7 @@
  *
  * (c) 2013 Sofian Audry -- info(@)sofianaudry(.)com
  * (c) 2013 Alexandre Quessy -- alexandre(@)quessy(.)net
+ * (c) 2016 Dame Diongue -- baydamd(@)gmail(.)com
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -32,7 +33,7 @@
 
 #include "MetaObjectRegistry.h"
 
-MM_BEGIN_NAMESPACE
+namespace mmp {
 
 // TODO: replace by ProjectAttribute
 //#include "ProjectWriter.h"
@@ -200,6 +201,6 @@ public:
   }
 };
 
-MM_END_NAMESPACE
+}
 
 #endif /* MAPPING_H_ */

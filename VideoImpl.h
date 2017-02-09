@@ -43,7 +43,7 @@
 #include <GL/gl.h>
 #endif
 
-MM_BEGIN_NAMESPACE
+namespace mmp {
 
 /**
  * Private declaration of the video player.
@@ -58,8 +58,10 @@ public:
    * This media player works for both video files and shared memory sockets.
    * If live is true, it's a shared memory socket.
    */
-  VideoImpl(bool live=false);
-  ~VideoImpl();
+  VideoImpl();
+  virtual ~VideoImpl();
+
+
 
 //  void setUri(const QString uri);
   /**
@@ -89,12 +91,6 @@ public:
   QString getUri() const;
 
   /**
-   * When using the shared memory source, returns whether or not we
-   * are attached to a shared memory socket.
-   */
-  bool getAttached();
-
-  /**
    * Returns the raw image of the last video frame.
    * It is currently unused!
    */
@@ -115,20 +111,26 @@ public:
   bool isReady() const { return _isMovieReady() && videoIsConnected(); }
 
   bool videoIsConnected() const { return _videoIsConnected; }
+  void videoConnect() { _videoIsConnected = true; }
+  bool videoIsSupported() const { return _queue0 != NULL; }
+  
+  bool audioIsConnected() const { return _audioIsConnected; }
+  void audioConnect() { _audioIsConnected = true; }
+  bool audioIsSupported() const { return _audioqueue0 != NULL; }
 
   /**
    * Performs regular updates (checks if movie is ready and checks messages).
    */
   void update();
-
-  // void runAudio();
+  virtual bool isLive() = 0;
 
   /**
-   * Loads a new movie file.
-   * 
-   * Creates a new GStreamer pipeline, opens a movie or a shmsrc socket.
+   * Loads a new video stream
+   *
+   * Creates a new GStreamer pipeline, opens a movie, webcam or shmsrc socket,
+   * depending on subclass.
    */
-  bool loadMovie(const QString& filename);
+  virtual bool loadMovie(const QString& filename);
 
   bool setPlayState(bool play);
   bool getPlayState() const { return _playState; }
@@ -137,12 +139,6 @@ public:
 
   bool seekTo(double position);
   bool seekTo(guint64 positionNanoSeconds);
-
-  /**
-   * Tells the VideoImpl that we are actually reading from a shmsrc.
-   * Called from the GStreamer callback of the shmsrc.
-   */
-  void setAttached(bool attach);
 
   void setRate(double rate=1.0);
   double getRate() const { return _rate; }
@@ -153,6 +149,9 @@ public:
   void resetMovie();
 
 protected:
+  virtual bool createVideoComponents();
+  virtual bool createAudioComponents();
+
   void unloadMovie();
   void freeResources();
 
@@ -178,6 +177,8 @@ private:
 
   void _freeCurrentSample();
 
+  void _freeElement(GstElement** element);
+
 public:
   // GStreamer callback that simply sets the #newSample# flag to point to TRUE.
   static GstFlowReturn gstNewSampleCallback(GstElement*, VideoImpl *p);
@@ -185,7 +186,7 @@ public:
 
   // GStreamer callback that plugs the audio/video pads into the proper elements when they
   // are made available by the source.
-  static void gstPadAddedCallback(GstElement *src, GstPad *newPad, VideoImpl* p);
+  //static void gstPadAddedCallback(GstElement *src, GstPad *newPad, VideoImpl* p);
 
   /// Locks mutex (default = no effect).
   void lockMutex();
@@ -196,23 +197,32 @@ public:
   /// Wait until first data samples are available (blocking).
   bool waitForNextBits(int timeout, const uchar** bits=0);
 
-private:
-  //locals
+protected:
+  int _width;
+  int _height;
 
-  // gstreamer elements
-  GstBus *_bus;
+  guint64 _duration; // duration (in nanoseconds) (unused for now)
+
+  bool _videoIsConnected;
+  bool _audioIsConnected;
+  bool _seekEnabled;
+
   GstElement *_pipeline;
-  GstElement *_uridecodebin0;
-  GstElement *_shmsrc0;
-  GstElement *_gdpdepay0;
+
   GstElement *_queue0;
+  GstElement *_capsfilter0;
+  GstElement *_videoscale0;
   GstElement *_videoconvert0;
   GstElement *_appsink0;
+
   GstElement *_audioqueue0;
   GstElement *_audioconvert0;
   GstElement *_audioresample0;
   GstElement *_audiovolume0;
   GstElement *_audiosink0;
+
+  // gstreamer elements
+  GstBus *_bus;
 
   /**
    * Temporary contains the image data of the last frame.
@@ -225,23 +235,12 @@ private:
   /**
    * Contains meta informations about current file.
    */
-  int _width;
-  int _height;
-//  bool _isSeekable;
-  guint64 _duration; // duration (in nanoseconds) (unused for now)
-
-  bool _videoIsConnected;
-
-  /**
-   * shmsrc socket poller.
-   */
-  GSource *_pollSource;
 
   /// Raw image data of the last video frame.
   uchar *_data;
 
   /// Is seek enabled on the current pipeline?
-  bool _seekEnabled;
+
 
   /// Playback rate (negative ==> reverse).
   double _rate;
@@ -251,8 +250,7 @@ private:
   /// Whether or not we are reading video from a shmsrc.
   bool _isSharedMemorySource;
 
-  /// Whether or not we are attached to a shmsrc, if using a shmsrc.
-  bool _attached;
+
 
   // unused
   bool _terminate;
@@ -278,6 +276,6 @@ private:
   static const int MAX_SAMPLES_IN_BUFFER_QUEUES = 30;
 };
 
-MM_END_NAMESPACE
+}
 
 #endif /* ifndef */
