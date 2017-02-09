@@ -1,3 +1,9 @@
+mapmap (0.5.0-1~xenial~ppa1) xenial; urgency=low
+
+  * New upstream release
+
+ -- Alexandre Quessy <aalex@mapmap.info>  Thu, 09 Feb 2017 18:29:25 -0500
+
 mapmap (0.4.0-1~trusty~ppa1) trusty; urgency=low
 
   * New upstream release
