@@ -24,7 +24,7 @@
 
 #include "Commands.h"
 
-MM_BEGIN_NAMESPACE
+namespace mmp {
 
 AddPaintCommand::AddPaintCommand(MainWindow *mainWindow, uid paintId, const QIcon &icon, const QString &name, QUndoCommand *parent) :
   QUndoCommand(parent),
@@ -81,6 +81,11 @@ void AddShapesCommand::redo()
   }
 }
 
+DuplicateShapesCommand::DuplicateShapesCommand(MainWindow *mainWindow, uid cloneId, QUndoCommand *parent):
+  AddShapesCommand(mainWindow, cloneId, parent)
+{
+  setText(QObject::tr("Duplicate mapping"));
+}
 
 TransformShapeCommand::TransformShapeCommand(MapperGLCanvas* canvas, TransformShapeOption option, QUndoCommand* parent)
   : QUndoCommand(parent),
@@ -240,4 +245,4 @@ void DeleteMappingCommand::redo()
   _mainWindow->deleteMapping(_mappingId);
 }
 
-MM_END_NAMESPACE
+}

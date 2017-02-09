@@ -20,9 +20,12 @@
 
 #include "Paint.h"
 #include "VideoImpl.h"
+#include "VideoUriDecodeBinImpl.h"
+#include "VideoV4l2SrcImpl.h"
+#include "VideoShmSrcImpl.h"
 #include <iostream>
 
-MM_BEGIN_NAMESPACE
+namespace mmp {
 
 UidAllocator Paint::allocator;
 
@@ -54,7 +57,9 @@ void Texture::write(QDomElement& obj)
   _writeNode(obj, "y", QString::number(getY()));
 }
 
-Paint::Paint(uid id) : Element(id, &allocator)
+Paint::Paint(uid id)
+  : Element(id, &allocator),
+    _isPlaying(false)
 {
 }
 
@@ -62,6 +67,29 @@ Paint::~Paint()
 {
   allocator.free(getId());
 }
+
+Image::Image(int id)
+  : Texture(id),
+    _rate(0),
+    _currentFrame(0),
+    _currentFrameReal(0.0),
+    _prevTime(0),
+    _bits(0)
+  {
+    setRate(1.0);
+  }
+
+Image::Image(const QString uri_, uid id)
+  : Texture(id),
+    _rate(0),
+    _currentFrame(-1),
+    _currentFrameReal(0.0),
+    _prevTime(0),
+    _bits(0)
+  {
+    setUri(uri_);
+    setRate(1.0);
+  }
 
 bool Image::setUri(const QString &uri)
 {
@@ -71,7 +99,76 @@ bool Image::setUri(const QString &uri)
     build();
     _emitPropertyChanged("uri");
   }
-  return !_image.isNull();
+  return !_images.isEmpty();
+}
+
+void Image::build()
+{
+  // Read all images.
+  QImageReader reader(_uri);
+  _images.clear();
+  for (int i=0; i<reader.imageCount(); i++)
+    _images.push_back(
+        QGLWidget::convertToGLFormat(reader.read())
+          .mirrored(true, false)
+          .transformed(QTransform().rotate(180))
+      );
+
+  rewind();
+}
+
+void Image::update()
+{
+  if (isAnimation() && isPlaying())
+  {
+    // Compute the interval of time since last call to update().
+    qreal currentTime = _elapsedTime();
+    qreal diffTime = currentTime - _prevTime;
+
+    // Update next frame.
+    _currentFrameReal += diffTime * _rate * MM::DEFAULT_FRAMES_PER_SECOND;
+    _currentFrameReal = wrapAround(_currentFrameReal, (qreal)_images.size());
+    uint nextFrame = (int)_currentFrameReal;
+
+    // If frame changed, update image bits pointer.
+    if (nextFrame != _currentFrame)
+    {
+      _currentFrame = nextFrame;
+      _bits = _images[_currentFrame].bits();
+      bitsChanged = true;
+    }
+
+    // Reset previous time.
+    _prevTime = currentTime;
+  }
+}
+
+void Image::rewind()
+{
+  // Reset/restart everything.
+  if (isAnimation())
+  {
+    _currentFrame     = 0;
+    _currentFrameReal = 0.0;
+    _prevTime         = 0;
+    _timer.start();
+  }
+  _bits = _images.isEmpty() ? 0 : _images[0].bits();
+  bitsChanged = true;
+}
+
+const uchar* Image::getBits() {
+  return _bits;
+}
+
+void Image::setRate(double rate)
+{
+  _rate = rate;
+}
+
+void Image::_doPlay()
+{
+  _prevTime = _elapsedTime();
 }
 
 /* Implementation of the Video class */
@@ -79,17 +176,31 @@ Video::Video(int id) : Texture(id),
     _uri(""),
     _impl(NULL)
 {
-  _impl = new VideoImpl(false);
+  _impl = new VideoUriDecodeBinImpl();
   setRate(1);
   setVolume(1);
 }
 
-Video::Video(const QString uri_, bool live, double rate, uid id):
+Video::Video(const QString uri_, VideoType type, double rate, uid id):
     Texture(id),
     _uri(""),
     _impl(NULL)
 {
-  _impl = new VideoImpl(live);
+  switch (type) {
+    case VIDEO_URI:
+      _impl = new VideoUriDecodeBinImpl();
+      break;
+    case VIDEO_WEBCAM:
+      _impl = new VideoV4l2SrcImpl();
+      break;
+    case VIDEO_SHMSRC:
+      _impl = new VideoShmSrcImpl();
+      break;
+    default:
+      fprintf (stderr, "Could not determine type for video source\n ");
+      break;
+  }
+  //_impl = new VideoShmSrcImpl();//V4l2SrcImpl();//UriDecodeBinImpl();
   setRate(rate);
   setVolume(1);
   setUri(uri_);
@@ -120,16 +231,6 @@ int Video::getHeight() const
 void Video::update() {
   _impl->update();
   Texture::update();
-}
-
-void Video::play()
-{
-  _impl->setPlayState(true);
-}
-
-void Video::pause()
-{
-  _impl->setPlayState(false);
 }
 
 void Video::rewind()
@@ -221,6 +322,16 @@ bool Video::setUri(const QString &uri)
   return true;
 }
 
+void Video::_doPlay()
+{
+  _impl->setPlayState(true);
+}
+
+void Video::_doPause()
+{
+  _impl->setPlayState(false);
+}
+
 bool Video::_generateThumbnail()
 {
   static QFileIconProvider provider;
@@ -258,7 +369,8 @@ bool Video::_generateThumbnail()
     }
 
   // Generate icon.
-  _icon = QIcon(QPixmap::fromImage(thumbnail));
+  _icon = QIcon(QPixmap::fromImage(thumbnail).scaled(MM::MAPPING_LIST_ICON_SIZE, MM::MAPPING_LIST_ICON_SIZE,
+                                                     Qt::IgnoreAspectRatio));
 
   // Reset movie.
   _impl->resetMovie();
@@ -266,4 +378,4 @@ bool Video::_generateThumbnail()
   return true;
 }
 
-MM_END_NAMESPACE
+}

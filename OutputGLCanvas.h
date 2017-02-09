@@ -3,6 +3,7 @@
  *
  * (c) 2013 Sofian Audry -- info(@)sofianaudry(.)com
  * (c) 2013 Alexandre Quessy -- alexandre(@)quessy(.)net
+ * (c) 2014 Dame Diongue -- baydamd(@)gmail(.)com
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,7 +24,7 @@
 
 #include "MapperGLCanvas.h"
 
-MM_BEGIN_NAMESPACE
+namespace mmp {
 
 class OutputGLCanvas: public MapperGLCanvas
 {
@@ -49,12 +50,18 @@ public:
   }
 
 private:
-  void _drawTestSignal(QPainter* painter);
+  void _drawClassicTestSignal(QPainter* painter);
+  void _drawPALTestCard(QPainter *painter);
+  void _drawNTSCTestCard(QPainter *painter);
+
+  void _drawResolutionText(QPainter *painter, const QRect &rect, int fontSize);
 
   bool _displayCrosshair;
   bool _displayTestSignal;
-  QImage _svg_test_signal;
+  QImage _classicTestCard;
   QBrush _brush_test_signal;
+  QImage _palTestCard;
+  QImage _ntscTestCard;
 
 protected:
   // overriden from QGlWidget:
@@ -64,6 +71,6 @@ protected:
   void mouseMoveEvent(QMouseEvent *event);
 };
 
-MM_END_NAMESPACE
+}
 
 #endif /* OutputGLCanvas_H_ */

@@ -21,7 +21,7 @@
 #include "MappingManager.h"
 #include <iostream>
 
-MM_BEGIN_NAMESPACE
+namespace mmp {
 
 MappingManager::MappingManager()
 {
@@ -40,6 +40,27 @@ QMap<uid, Mapping::ptr> MappingManager::getPaintMappings(const Paint::ptr paint)
     }
   }
   return paintMappings;
+}
+
+
+Paint::ptr MappingManager::getPaintByName(QString name)
+{
+  return _getElementByName(paintVector, name);
+}
+
+QVector<Paint::ptr> MappingManager::getPaintsByNameRegExp(QString namePattern)
+{
+  return _getElementsByNameRegExp(paintVector, namePattern);
+}
+
+Mapping::ptr MappingManager::getMappingByName(QString name)
+{
+  return _getElementByName(mappingVector, name);
+}
+
+QVector<Mapping::ptr> MappingManager::getMappingsByNameRegExp(QString namePattern)
+{
+  return _getElementsByNameRegExp(mappingVector, namePattern);
 }
 
 QMap<uid, Mapping::ptr> MappingManager::getPaintMappingsById(uid paintId) const
@@ -153,8 +174,8 @@ QVector<Mapping::ptr> MappingManager::getVisibleMappings() const
           it != mappingVector.end(); ++it)
   {
     // Solo has priority over invisible (mute)
-    if ( (hasSolo && (*it)->isSolo() && (*it)->isVisible()) ||
-            (! hasSolo && (*it)->isVisible()) )
+    if ( (hasSolo && (*it)->isSolo()) ||
+         (! hasSolo && (*it)->isVisible()) )
     {
       visible.push_back(*it);
     }
@@ -196,6 +217,21 @@ bool MappingManager::mappingIsVisible(Mapping::ptr mapping) const
   }
 }
 
+/// Returns the list of visible paints (ie. paints for which at least one mapping is visible).
+QVector<Paint::ptr> MappingManager::getVisiblePaints() const
+{
+  QVector<Paint::ptr> visiblePaints;
+  QVector<Mapping::ptr> visibleMappings = getVisibleMappings();
+  for (QVector<Mapping::ptr>::const_iterator it = visibleMappings.begin();
+          it != visibleMappings.end(); ++it)
+  {
+    Paint::ptr paint((*it)->getPaint());
+    if (!visiblePaints.contains(paint))
+      visiblePaints.push_back(paint);
+  }
+  return visiblePaints;
+}
+
 void MappingManager::reorderMappings(QVector<uid> mappingIds)
 {
   // Both vector needs to have the same size.
@@ -230,4 +266,4 @@ void MappingManager::clearAll()
   mappingMap.clear();
 }
 
-MM_END_NAMESPACE
+}

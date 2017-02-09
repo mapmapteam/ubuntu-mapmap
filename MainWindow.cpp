@@ -3,6 +3,7 @@
  *
  * (c) 2013 Sofian Audry -- info(@)sofianaudry(.)com
  * (c) 2013 Alexandre Quessy -- alexandre(@)quessy(.)net
+ * (c) 2014 Dame Diongue -- baydamd(@)gmail(.)com
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,24 +20,29 @@
  */
 
 #include "MainWindow.h"
+#include "PreferenceDialog.h"
+#include "AboutDialog.h"
 #include "Commands.h"
 #include "ProjectWriter.h"
 #include "ProjectReader.h"
 #include <sstream>
 #include <string>
 
-MM_BEGIN_NAMESPACE
+namespace mmp {
 
 MainWindow::MainWindow()
 {
   // Create model.
 #if QT_VERSION >= 0x050500
-  QMessageLogger(__FILE__, __LINE__, 0).info() << "Video support: " << (Video::hasVideoSupport() ? "yes" : "no");
+  QMessageLogger(__FILE__, __LINE__, 0).info() << "Video support: " <<
+      (Video::hasVideoSupport() ? "yes" : "no");
 #else
-  QMessageLogger(__FILE__, __LINE__, 0).debug() << "Video support: " << (Video::hasVideoSupport() ? "yes" : "no");
+  QMessageLogger(__FILE__, __LINE__, 0).debug() << "Video support: " <<
+      (Video::hasVideoSupport() ? "yes" : "no");
 #endif
 
   mappingManager = new MappingManager;
+
 
   // Initialize internal variables.
   currentPaintId = NULL_UID;
@@ -46,11 +52,15 @@ MainWindow::MainWindow()
   _hasCurrentMapping = false;
   currentSelectedItem = NULL;
 
+  // Frames per second.
+  _framesPerSecond = (-1);
+
   // Play state.
   _isPlaying = false;
 
   // Editing toggles.
   _displayControls = true;
+  _displayPaintControls = true;
   _stickyVertices = true;
   _displayUndoStack = false;
   _showMenuBar = true; // Show menubar by default
@@ -81,15 +91,16 @@ MainWindow::MainWindow()
 
   // Create and start timer.
   videoTimer = new QTimer(this);
-  videoTimer->setInterval( int( 1000 / MM::FRAMES_PER_SECOND ) );
-  connect(videoTimer, SIGNAL(timeout()), this, SLOT(updateCanvases()));
+  connect(videoTimer, SIGNAL(timeout()), this, SLOT(processFrame()));
+  setFramesPerSecond(MM::DEFAULT_FRAMES_PER_SECOND);
   videoTimer->start();
+
+  // Create elapsed timer.
+  systemTimer = new QElapsedTimer;
+  systemTimer->start();
 
   // Start playing by default.
   play();
-
-  // after readSettings():
-  _preferences_dialog = new PreferencesDialog(this, this);
 }
 
 MainWindow::~MainWindow()
@@ -99,6 +110,7 @@ MainWindow::~MainWindow()
 #ifdef HAVE_OSC
   delete osc_timer;
 #endif // ifdef
+  delete systemTimer;
 }
 
 void MainWindow::handlePaintItemSelectionChanged()
@@ -129,7 +141,6 @@ void MainWindow::handlePaintItemSelectionChanged()
   addEllipseAction->setEnabled(paintItemSelected);
   // Enable some menus and buttons
   sourceCanvasToolbar->enableZoomToolBar(paintItemSelected);
-  destinationCanvasToolbar->enableZoomToolBar(paintItemSelected);
   sourceMenu->setEnabled(paintItemSelected);
 
   // Update canvases.
@@ -145,6 +156,9 @@ void MainWindow::handleMappingItemSelectionChanged(const QModelIndex &index)
   // Set current mapping and paint
   setCurrentMapping(mappingId);
   setCurrentPaint(paintId);
+  // Enable destination zoom toolbar buttons and avoid loop
+  if (!destinationCanvasToolbar->buttonsAreEnable())
+   destinationCanvasToolbar->enableZoomToolBar(true);
 
   // Update canvases.
   updateCanvases();
@@ -164,6 +178,8 @@ void MainWindow::handleMappingItemChanged(const QModelIndex &index)
   mapping->setVisible(index.data(Qt::CheckStateRole).toBool());
   mapping->setSolo(index.data(Qt::CheckStateRole + 1).toBool());
   mapping->setLocked(index.data(Qt::CheckStateRole + 2).toBool());
+
+  updatePlayingState();
  }
 
 void MainWindow::handleMappingIndexesMoved()
@@ -179,6 +195,9 @@ void MainWindow::handleMappingIndexesMoved()
 
   // Update canvases according to new order.
   updateCanvases();
+
+  // Update playing state.
+  updatePlayingState();
 }
 
 void MainWindow::handlePaintItemSelected(QListWidgetItem* item)
@@ -231,6 +250,8 @@ void MainWindow::handlePaintChanged(Paint::ptr paint)
   {
     setCurrentMapping(curMappingId);
   }
+
+  updatePlayingState();
 }
 
 void MainWindow::mappingPropertyChanged(uid id, QString propertyName, QVariant value)
@@ -247,7 +268,11 @@ void MainWindow::mappingPropertyChanged(uid id, QString propertyName, QVariant v
   // Send to actions.
   if (mapping == getCurrentMapping())
   {
-    if (propertyName == "solo")
+    if (propertyName == "visible")
+    {
+      mappingHideAction->setChecked(!value.toBool());
+    }
+    else if (propertyName == "solo")
     {
       mappingSoloAction->setChecked(value.toBool());
     }
@@ -255,15 +280,28 @@ void MainWindow::mappingPropertyChanged(uid id, QString propertyName, QVariant v
     {
       mappingLockedAction->setChecked(value.toBool());
     }
-    else if (propertyName == "visible")
-    {
-      mappingHideAction->setChecked(!value.toBool());
-    }
   }
 
   // Send to list items.
+  const QModelIndex& index = mappingListModel->getIndexFromId(mapping->getId());
   if (propertyName == "name")
-    mappingListModel->getIndexFromId(id).data(Qt::EditRole).setValue(mapping->getName());
+  {
+    mappingListModel->setData(index, mapping->getName(), Qt::EditRole);
+  }
+  else if (propertyName == "visible")
+  {
+    mappingListModel->setData(index, mapping->isVisible(), Qt::CheckStateRole);
+  }
+  else if (propertyName == "solo")
+  {
+    mappingListModel->setData(index, mapping->isSolo(), Qt::CheckStateRole + 1);
+  }
+  else if (propertyName == "locked")
+  {
+    mappingListModel->setData(index, mapping->isLocked(), Qt::CheckStateRole + 2);
+  }
+
+  updatePlayingState();
 }
 
 void MainWindow::paintPropertyChanged(uid id, QString propertyName, QVariant value)
@@ -282,12 +320,14 @@ void MainWindow::paintPropertyChanged(uid id, QString propertyName, QVariant val
   QListWidgetItem* paintItem = getItemFromId(*paintList, id);
   if (propertyName == "name")
     paintItem->setText(paint->getName());
+
+  updatePlayingState();
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
   // Stop video playback to avoid lags. XXX Hack
-  videoTimer->stop();
+  pause(false);
 
   // Popup dialog allowing the user to save before closing.
   if (okToContinue())
@@ -295,7 +335,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     // Save settings
     writeSettings();
     // Close all top level widgets
-    foreach (QWidget *widget, QApplication::topLevelWidgets()) {
+    for (QWidget *widget: QApplication::topLevelWidgets()) {
       if (widget != this) { // Avoid recursion
         widget->close();
       }
@@ -308,7 +348,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
   }
 
   // Restart video playback. XXX Hack
-  videoTimer->start();
+  play(false);
 }
 
 void MainWindow::keyPressEvent(QKeyEvent *event)
@@ -327,7 +367,7 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
     }
   }
 #endif
-#ifdef Q_OS_WIN
+#ifdef Q_OS_WIN32
   if (event->modifiers() & Qt::AltModifier) {
     if (!_showMenuBar) {
       menuBar()->setHidden(!menuBar()->isHidden());
@@ -337,17 +377,37 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
 #endif
 }
 
+bool MainWindow::eventFilter(QObject *object, QEvent *event)
+{
+  QMenu *menu = static_cast<QMenu*>(object);
+
+  if (menu && (event->type() == QEvent::MouseButtonPress
+      || event->type() == QEvent::MouseButtonDblClick))
+  {
+    QMouseEvent *mouseEvent = static_cast<QMouseEvent*>(event);
+    // Disable right click on context menu actions
+    if (mouseEvent->buttons() & Qt::RightButton) {
+      mouseEvent->ignore();
+      return true;
+    }
+    return false;
+  }
+
+  return QMainWindow::eventFilter(object, event);
+}
+
 void MainWindow::setOutputWindowFullScreen(bool enable)
 {
   outputWindow->setFullScreen(enable);
   // setCheckState
   displayControlsAction->setChecked(enable);
-}
+  displayPaintControlsAction->setChecked(enable);
+ }
 
 void MainWindow::newFile()
 {
   // Stop video playback to avoid lags. XXX Hack
-  videoTimer->stop();
+  pause(false);
 
   // Popup dialog allowing the user to save before creating a new file.
   if (okToContinue())
@@ -358,13 +418,13 @@ void MainWindow::newFile()
   }
 
   // Restart video playback. XXX Hack
-  videoTimer->start();
+  play(false);
 }
 
 void MainWindow::open()
 {
   // Stop video playback to avoid lags. XXX Hack
-  videoTimer->stop();
+  pause(false);
 
   // Popup dialog allowing the user to save before opening a new file.
   if (okToContinue())
@@ -378,12 +438,7 @@ void MainWindow::open()
   }
 
   // Restart video playback. XXX Hack
-  videoTimer->start();
-}
-
-void MainWindow::preferences()
-{
-  this->_preferences_dialog->show();
+  play(false);
 }
 
 bool MainWindow::save()
@@ -402,7 +457,7 @@ bool MainWindow::save()
 bool MainWindow::saveAs()
 {
   // Stop video playback to avoid lags. XXX Hack
-  videoTimer->stop();
+  pause(false);
 
   // Popul file dialog to choose filename.
   QString fileName = QFileDialog::getSaveFileName(this,
@@ -410,11 +465,11 @@ bool MainWindow::saveAs()
                                                   tr("MapMap files (*.%1)").arg(MM::FILE_EXTENSION));
 
   // Restart video playback. XXX Hack
-  videoTimer->start();
+  play(false);
 
   if (fileName.isEmpty())
     return false;
-  
+
   if (! fileName.endsWith(MM::FILE_EXTENSION))
   {
     std::cout << "filename doesn't end with expected extension: " <<
@@ -430,7 +485,7 @@ bool MainWindow::saveAs()
 void MainWindow::importMedia()
 {
   // Stop video playback to avoid lags. XXX Hack
-  videoTimer->stop();
+  pause(false);
 
   // Pop-up file-choosing dialog to choose media file.
   // TODO: restrict the type of files that can be imported
@@ -441,22 +496,67 @@ void MainWindow::importMedia()
                                                   .arg(MM::VIDEO_FILES_FILTER)
                                                   .arg(MM::IMAGE_FILES_FILTER));
   // Restart video playback. XXX Hack
-  videoTimer->start();
+  play(false);
 
   // Check if file is image or not
   // according to file extension
   if (!fileName.isEmpty()) {
-    if (MM::IMAGE_FILES_FILTER.contains(QFileInfo(fileName).suffix(), Qt::CaseInsensitive))
+    if (!QFileInfo(fileName).suffix().isEmpty() && MM::IMAGE_FILES_FILTER.contains(QFileInfo(fileName).suffix(), Qt::CaseInsensitive))
       importMediaFile(fileName, true);
     else
       importMediaFile(fileName, false);
   }
 }
 
+void MainWindow::openCameraDevice()
+{
+#if QT_VERSION >= 0x050500
+  QString device;
+  QList<QCameraInfo> cameras = QCameraInfo::availableCameras();
+
+  if (cameras.count() > 1)
+  {
+    QStringList devicesList;
+    QMap<QString, QString> devices;
+
+    for (const QCameraInfo &cameraInfo: cameras)
+    {
+      devicesList << cameraInfo.description();
+      devices.insert(cameraInfo.description(), cameraInfo.deviceName());
+    }
+
+    bool ok;
+    QString deviceName = QInputDialog::getItem(this, tr("Camera device"),
+                                               tr("Select camera"), devicesList, 0, false, &ok);
+
+    if (ok && !deviceName.isEmpty())
+    {
+      if (devices.contains(deviceName))
+        device = devices.value(deviceName);
+    }
+  }
+
+  else if (QCameraInfo::defaultCamera().isNull())
+  {
+    QMessageBox::warning(this, tr("No camera available"), tr("You can not use this feature!\nNo camera available in your system"));
+  }
+
+  else
+  {
+    device = QCameraInfo::defaultCamera().deviceName();
+  }
+
+  if (!device.isEmpty())
+    importMediaFile(device, false);
+#else
+    QMessageBox::warning(this, tr("No camera available"), tr("You can not use this feature!\nNo camera available in your system"));
+#endif
+}
+
 void MainWindow::addColor()
 {
   // Stop video playback to avoid lags. XXX Hack
-  videoTimer->stop();
+  pause(false);
 
   // Pop-up color-choosing dialog to choose color paint.
   // FIXME: we use a static variable to store the last chosen color
@@ -471,7 +571,7 @@ void MainWindow::addColor()
   }
 
   // Restart video playback. XXX Hack
-  videoTimer->start();
+  play(false);
 }
 
 void MainWindow::addMesh()
@@ -488,7 +588,7 @@ void MainWindow::addMesh()
   Mapping* mappingPtr;
   if (paint->getType() == "color")
   {
-    MShape::ptr outputQuad = MShape::ptr(Util::createQuadForColor(sourceCanvas->width(), sourceCanvas->height()));
+    MShape::ptr outputQuad = MShape::ptr(Util::createMeshForColor(sourceCanvas->width(), sourceCanvas->height()));
     mappingPtr = new ColorMapping(paint, outputQuad);
   }
   else
@@ -582,32 +682,36 @@ void MainWindow::addEllipse()
 void MainWindow::about()
 {
   // Stop video playback to avoid lags. XXX Hack
-  videoTimer->stop();
+  pause(false);
 
-  // Pop-up about dialog.
-  QMessageBox::about(this, tr("About MapMap"),
-                     tr("<h2><img src=\":mapmap-title\"/> %1</h2>"
-                        "<p>Copyright &copy; 2013 %2.</p>"
-                        "<p>MapMap is a free software for video mapping.</p>"
-                        "<p>Projection mapping, also known as video mapping and spatial augmented reality, "
-                        "is a projection technology used to turn objects, often irregularly shaped, into "
-                        "a display surface for video projection. These objects may be complex industrial "
-                        "landscapes, such as buildings. By using specialized software, a two or three "
-                        "dimensional object is spatially mapped on the virtual program which mimics the "
-                        "real environment it is to be projected on. The software can interact with a "
-                        "projector to fit any desired image onto the surface of that object. This "
-                        "technique is used by artists and advertisers alike who can add extra dimensions, "
-                        "optical illusions, and notions of movement onto previously static objects. The "
-                        "video is commonly combined with, or triggered by, audio to create an "
-                        "audio-visual narrative."
-                        "This project was made possible by the support of the International Organization of "
-                        "La Francophonie.</p>"
-                        "<p>http://mapmap.info<br />"
-                        "http://www.francophonie.org</p>"
-                        ).arg(MM::VERSION, MM::COPYRIGHT_OWNERS));
+//  // Pop-up about dialog.
+//  QMessageBox::about(this, tr("About MapMap"),
+//                     tr("<h2><img src=\":mapmap-title\"/> %1</h2>"
+//                        "<p>Copyright &copy; 2013 %2.</p>"
+//                        "<p>MapMap is a free software for video mapping.</p>"
+//                        "<p>Projection mapping, also known as video mapping and spatial augmented reality, "
+//                        "is a projection technology used to turn objects, often irregularly shaped, into "
+//                        "a display surface for video projection. These objects may be complex industrial "
+//                        "landscapes, such as buildings. By using specialized software, a two or three "
+//                        "dimensional object is spatially mapped on the virtual program which mimics the "
+//                        "real environment it is to be projected on. The software can interact with a "
+//                        "projector to fit any desired image onto the surface of that object. This "
+//                        "technique is used by artists and advertisers alike who can add extra dimensions, "
+//                        "optical illusions, and notions of movement onto previously static objects. The "
+//                        "video is commonly combined with, or triggered by, audio to create an "
+//                        "audio-visual narrative."
+//                        "This project was made possible by the support of the International Organization of "
+//                        "La Francophonie.</p>"
+//                        "<p>http://mapmap.info<br />"
+//                        "http://www.francophonie.org</p>"
+//                        ).arg(MM::VERSION, MM::COPYRIGHT_OWNERS));
+
+  _aboutDialog = new AboutDialog(this);
+  _aboutDialog->setAttribute(Qt::WA_DeleteOnClose); // Important for ressource management
+  _aboutDialog->show();
 
   // Restart video playback. XXX Hack
-  videoTimer->start();
+  play(false);
 }
 
 void MainWindow::updateStatusBar()
@@ -620,7 +724,7 @@ void MainWindow::updateStatusBar()
   currentMessageLabel->setText(statusBar()->currentMessage());
   sourceZoomLabel->setText("Source: " + QString::number(int(sourceCanvas->getZoomFactor() * 100)).append(QChar('%')));
   destinationZoomLabel->setText("Destination: " + QString::number(int(destinationCanvas->getZoomFactor() * 100)).append(QChar('%')));
-  undoLabel->setText(undoStack->text(undoStack->count() - 1));
+  lastActionLabel->setText(undoStack->text(undoStack->count() - 1));
 }
 
 void MainWindow::showMenuBar(bool shown)
@@ -635,7 +739,7 @@ void MainWindow::showMenuBar(bool shown)
   if (currentDesktop != "unity")
     menuBar()->setVisible(shown);
 #endif
-#ifdef Q_OS_WIN // On Windows
+#ifdef Q_OS_WIN32 // On Windows
     menuBar()->setVisible(shown);
 #endif
 }
@@ -724,7 +828,7 @@ void MainWindow::renameMapping(uid mappingId, const QString &name)
 {
   Mapping::ptr mapping = mappingManager->getMappingById(mappingId);
   Q_CHECK_PTR(mapping);
-  
+
   if (!mapping.isNull()) {
     QModelIndex index = mappingListModel->getIndexFromId(mappingId);
     mappingListModel->setData(index, name, Qt::EditRole);
@@ -774,6 +878,32 @@ void MainWindow::paintListEditEnd(QWidget *editor)
 {
   QString name = reinterpret_cast<QLineEdit*>(editor)->text();
   renamePaint(getItemId(*paintList->currentItem()), name);
+}
+
+void MainWindow::setupOutputScreen()
+{
+  QAction *actionSender = qobject_cast<QAction *>(sender());
+
+  if (actionSender)
+    outputWindow->setPreferredScreen(actionSender->data().toInt());
+  // If want that the changes take effect immediatelly
+  // when the output is in fullscreen mode
+  if (outputFullScreenAction->isChecked()) {
+    // XXX: Close and reopen // It's not the best way to do
+    outputFullScreenAction->toggle();
+    outputFullScreenAction->trigger();
+  }
+}
+
+void MainWindow::updateScreenCount()
+{
+  // Clear action list before
+  screenActions.clear();
+  // Refresh screen action
+  updateScreenActions();
+  // Update Output menu
+  outputScreenMenu->clear();
+  outputScreenMenu->addActions(screenActions);
 }
 
 void MainWindow::openRecentFile()
@@ -833,7 +963,7 @@ bool MainWindow::clearProject()
 }
 
 uid MainWindow::createMediaPaint(uid paintId, QString uri, float x, float y,
-                                 bool isImage, bool live, double rate)
+                                 bool isImage, VideoType type, double rate)
 {
   // Cannot create image with already existing id.
   if (Paint::getUidAllocator().exists(paintId))
@@ -842,14 +972,14 @@ uid MainWindow::createMediaPaint(uid paintId, QString uri, float x, float y,
   else
   {
     // Check if file exists before
-    if (! fileExists(uri))
-      uri = locateMediaFile(uri, isImage);
+    //if (! fileExists(uri))
+      //uri = locateMediaFile(uri, isImage);
 
     Texture* tex = 0;
     if (isImage)
       tex = new Image(uri, paintId);
     else {
-      tex = new Video(uri, live, rate, paintId);
+      tex = new Video(uri, type, rate, paintId);
     }
 
     // Create new image with corresponding ID.
@@ -1136,62 +1266,39 @@ void MainWindow::deleteMapping(uid mappingId)
 void MainWindow::duplicateMapping(uid mappingId)
 {
   // Current Mapping
-  Mapping::ptr mappingPtr = mappingManager->getMappingById(mappingId);
+  Mapping::ptr currentMapping = mappingManager->getMappingById(mappingId);
 
   // Get Mapping Paint and Shape
-  Paint::ptr paint = mappingPtr->getPaint();
-  MShape::ptr shape = mappingPtr->getShape();
-  // Temporary shared pointers
-  MShape::ptr shapePtr;
-  // Create new mapping
-  Mapping *mapping;
+  Paint::ptr paintPtr = currentMapping->getPaint();
 
-  QString shapeType = shape->getType();
+  // Create new shape base on the current
+  MShape::ptr shape(currentMapping->getShape()->clone());
 
-  // Code below need to be improved it's feel like duplicated
-  if (paint->getType() == "color") // Color paint
-  {
-    if (shapeType == "quad")
-      shapePtr = MShape::ptr(new Quad(shape->getVertex(0), shape->getVertex(1),
-                                      shape->getVertex(2), shape->getVertex(3)));
-
-    if (shapeType == "triangle")
-      shapePtr = MShape::ptr(new Triangle(shape->getVertex(0), shape->getVertex(1), shape->getVertex(2)));
-
-    if (shapeType == "ellipse")
-      shapePtr = MShape::ptr(new Ellipse(shape->getVertex(0), shape->getVertex(1), shape->getVertex(2),
-                                         shape->getVertex(3)));
-
-    mapping = new ColorMapping(paint, shapePtr);
-  }
-  else // Or Texture Paint
-  {
-    MShape::ptr inputShape = mappingPtr->getInputShape();
-
-    if (shapeType == "mesh")
-      shapePtr = MShape::ptr(new Mesh(shape->getVertex(0), shape->getVertex(1),
-                                      shape->getVertex(3), shape->getVertex(2)));
-
-    if (shapeType == "triangle")
-      shapePtr = MShape::ptr(new Triangle(shape->getVertex(0), shape->getVertex(1), shape->getVertex(2)));
-
-    if (shapeType == "ellipse")
-      shapePtr = MShape::ptr(new Ellipse(shape->getVertex(0), shape->getVertex(1), shape->getVertex(2),
-                                         shape->getVertex(3), shape->getVertex(4)));
-
-    mapping = new TextureMapping(paint, shapePtr, inputShape);
-  }
-
-  // Scaling of duplicated mapping
-  if (shapeType == "quad" || shapeType == "mesh")
-    shapePtr->translate(QPointF(20, 20));
-  else
-    shapePtr->translate(QPointF(0, 20));
+  // Create a new input shape too
+  MShape::ptr inputShape;
+  if (currentMapping->hasInputShape())
+    inputShape.reset(currentMapping->getInputShape()->clone());
 
   // Create new duplicated mapping item
-  Mapping::ptr clonedMapping(mapping);
-  uint cloneId = mappingManager->addMapping(clonedMapping);
-  addMappingItem(cloneId);
+  Mapping::ptr clonedMappingPtr;
+  if (paintPtr->getType() == "color") // Color paint
+    //clonedMapping = new ColorMapping(paintPtr, shapePtr);
+    clonedMappingPtr = Mapping::ptr(new ColorMapping(paintPtr, shape));
+  else // Or Texture Paint
+    //clonedMapping = new TextureMapping(paintPtr, shapePtr, inputShape);
+    clonedMappingPtr = Mapping::ptr(new TextureMapping(paintPtr, shape, inputShape));
+
+  // Scale the duplicated shapes
+  if (shape->getType() == "mesh")
+    shape->translate(QPointF(20, 20));
+  else
+    shape->translate(QPointF(0, 20));
+
+  // Get duplicated mapping id
+  uid cloneId = mappingManager->addMapping(clonedMappingPtr);
+
+  // Lets the undo-stack handle Undo/Redo the duplication of mapping item.
+  undoStack->push(new DuplicateShapesCommand(this, cloneId));
 }
 
 /// Deletes/removes a paint and all associated mappigns.
@@ -1255,7 +1362,7 @@ void MainWindow::createLayout()
   mappingList->horizontalHeader()->setResizeMode(QHeaderView::ResizeToContents);
   mappingList->verticalHeader()->setResizeMode(QHeaderView::ResizeToContents);
   mappingList->horizontalHeader()->setStretchLastSection(true);
-  mappingList->setShowGrid(false);
+  //mappingList->setShowGrid(false);
   mappingList->horizontalHeader()->hide();
   mappingList->verticalHeader()->hide();
   mappingList->setMouseTracking(true);// Important
@@ -1272,6 +1379,7 @@ void MainWindow::createLayout()
   sourceCanvas->setMinimumSize(CANVAS_MINIMUM_WIDTH, CANVAS_MINIMUM_HEIGHT);
 
   sourceCanvasToolbar = new MapperGLCanvasToolbar(sourceCanvas, this);
+  sourceCanvasToolbar->setToolbarTitle(tr("Source"));
   QVBoxLayout* sourceLayout = new QVBoxLayout;
   sourcePanel = new QWidget(this);
 
@@ -1286,6 +1394,7 @@ void MainWindow::createLayout()
   destinationCanvas->setMinimumSize(CANVAS_MINIMUM_WIDTH, CANVAS_MINIMUM_HEIGHT);
 
   destinationCanvasToolbar = new MapperGLCanvasToolbar(destinationCanvas, this);
+  destinationCanvasToolbar->setToolbarTitle(tr("Destination"));
   QVBoxLayout* destinationLayout = new QVBoxLayout;
   destinationPanel = new QWidget(this);
 
@@ -1293,6 +1402,9 @@ void MainWindow::createLayout()
   destinationLayout->addWidget(destinationCanvas);
   destinationLayout->addWidget(destinationCanvasToolbar, 0, Qt::AlignRight);
   destinationPanel->setLayout(destinationLayout);
+
+  // Preferences dialog
+  _preferenceDialog = new PreferenceDialog(this);
 
   outputWindow = new OutputGLWindow(this, destinationCanvas);
   outputWindow->installEventFilter(destinationCanvas);
@@ -1316,10 +1428,12 @@ void MainWindow::createLayout()
 
   // Create layout.
   paintSplitter = new QSplitter(Qt::Vertical);
+  paintSplitter->setChildrenCollapsible(false);
   paintSplitter->addWidget(paintList);
   paintSplitter->addWidget(paintPropertyPanel);
 
   mappingSplitter = new QSplitter(Qt::Vertical);
+  mappingSplitter->setChildrenCollapsible(false);
   mappingSplitter->addWidget(mappingList);
   mappingSplitter->addWidget(mappingPropertyPanel);
 
@@ -1437,6 +1551,16 @@ void MainWindow::createActions()
   addAction(importMediaAction);
   connect(importMediaAction, SIGNAL(triggered()), this, SLOT(importMedia()));
 
+  // Open camera.
+  openCameraAction = new QAction(tr("Open &Camera Device..."), this);
+  openCameraAction->setShortcut(Qt::CTRL + Qt::Key_C);
+  openCameraAction->setIcon(QIcon(":/add-image"));
+  openCameraAction->setIconVisibleInMenu(false);
+  openCameraAction->setToolTip(tr("Choose your camera device..."));
+  openCameraAction->setShortcutContext(Qt::ApplicationShortcut);
+  addAction(openCameraAction);
+  connect(openCameraAction, SIGNAL(triggered()), this, SLOT(openCameraDevice()));
+
   // Add color.
   addColorAction = new QAction(tr("Add &Color Paint..."), this);
   addColorAction->setShortcut(Qt::CTRL + Qt::SHIFT + Qt::Key_A);
@@ -1471,7 +1595,7 @@ void MainWindow::createActions()
   addAction(redoAction);
 
   // About.
-  aboutAction = new QAction(tr("&About"), this);
+  aboutAction = new QAction(tr("&About MapMap"), this);
   aboutAction->setToolTip(tr("Show the application's About box"));
   aboutAction->setIconVisibleInMenu(false);
   aboutAction->setShortcutContext(Qt::ApplicationShortcut);
@@ -1561,13 +1685,13 @@ void MainWindow::createActions()
   //preferencesAction->setIconVisibleInMenu(false);
   preferencesAction->setShortcutContext(Qt::ApplicationShortcut);
   addAction(preferencesAction);
-  connect(preferencesAction, SIGNAL(triggered()), this, SLOT(preferences()));
+  connect(preferencesAction, SIGNAL(triggered()), _preferenceDialog, SLOT(exec()));
 
-  // Add quad/mesh.
-  addMeshAction = new QAction(tr("Add Quad/&Mesh"), this);
+  // Add mesh.
+  addMeshAction = new QAction(tr("Add &Mesh"), this);
   addMeshAction->setShortcut(Qt::CTRL + Qt::Key_M);
   addMeshAction->setIcon(QIcon(":/add-mesh"));
-  addMeshAction->setToolTip(tr("Add quad/mesh"));
+  addMeshAction->setToolTip(tr("Add mesh"));
   addMeshAction->setIconVisibleInMenu(false);
   addMeshAction->setShortcutContext(Qt::ApplicationShortcut);
   addAction(addMeshAction);
@@ -1597,8 +1721,9 @@ void MainWindow::createActions()
   addEllipseAction->setEnabled(false);
 
   // Play.
+  const QKeySequence PLAY_PAUSE_KEY_SEQUENCE = Qt::CTRL + Qt::SHIFT + Qt::Key_P;
   playAction = new QAction(tr("Play"), this);
-  playAction->setShortcut(Qt::Key_Space);
+  playAction->setShortcut(PLAY_PAUSE_KEY_SEQUENCE);
   playAction->setIcon(QIcon(":/play"));
   playAction->setToolTip(tr("Play"));
   playAction->setIconVisibleInMenu(false);
@@ -1609,7 +1734,7 @@ void MainWindow::createActions()
 
   // Pause.
   pauseAction = new QAction(tr("Pause"), this);
-  pauseAction->setShortcut(Qt::Key_Space);
+  pauseAction->setShortcut(PLAY_PAUSE_KEY_SEQUENCE);
   pauseAction->setIcon(QIcon(":/pause"));
   pauseAction->setToolTip(tr("Pause"));
   pauseAction->setIconVisibleInMenu(false);
@@ -1629,10 +1754,10 @@ void MainWindow::createActions()
   connect(rewindAction, SIGNAL(triggered()), this, SLOT(rewind()));
 
   // Toggle display of output window.
-  outputFullScreenAction = new QAction(tr("&Full Screen"), this);
+  outputFullScreenAction = new QAction(tr("Toggle &Fullscreen"), this);
   outputFullScreenAction->setShortcut(Qt::CTRL + Qt::Key_F);
   outputFullScreenAction->setIcon(QIcon(":/fullscreen"));
-  outputFullScreenAction->setToolTip(tr("Full screen mode"));
+  outputFullScreenAction->setToolTip(tr("Toggle Fullscreen"));
   outputFullScreenAction->setIconVisibleInMenu(false);
   outputFullScreenAction->setCheckable(true);
   // Don't be displayed by default
@@ -1641,18 +1766,16 @@ void MainWindow::createActions()
   addAction(outputFullScreenAction);
   // Manage fullscreen/modal show of GL output window.
   connect(outputFullScreenAction, SIGNAL(toggled(bool)), outputWindow, SLOT(setFullScreen(bool)));
-  // When closing the GL output window or hit ESC key, uncheck the action in menu.
-//  connect(outputWindow, SIGNAL(closed()), outputFullScreenAction, SLOT(toggle()));
-  connect(QApplication::desktop(), SIGNAL(screenCountChanged(int)), outputWindow, SLOT(updateScreenCount(int)));
+  connect(QApplication::desktop(), SIGNAL(screenCountChanged(int)), this, SLOT(updateScreenCount()));
   // Create hiden action for closing output window
-  QAction *closeOutput = new QAction(tr("Close output"), this);
+  QAction *closeOutput = new QAction(this);
   closeOutput->setShortcut(Qt::Key_Escape);
   closeOutput->setShortcutContext(Qt::ApplicationShortcut);
   addAction(closeOutput);
   connect(closeOutput, SIGNAL(triggered(bool)), this, SLOT(exitFullScreen()));
 
   // Toggle display of canvas controls.
-  displayControlsAction = new QAction(tr("&Display Canvas Controls"), this);
+  displayControlsAction = new QAction(tr("&Display Controls"), this);
   displayControlsAction->setShortcut(Qt::ALT + Qt::Key_C);
   displayControlsAction->setIcon(QIcon(":/control-points"));
   displayControlsAction->setToolTip(tr("Display canvas controls"));
@@ -1663,7 +1786,22 @@ void MainWindow::createActions()
   addAction(displayControlsAction);
   // Manage show/hide of canvas controls.
   connect(displayControlsAction, SIGNAL(toggled(bool)), this, SLOT(enableDisplayControls(bool)));
-  connect(displayControlsAction, SIGNAL(toggled(bool)), outputWindow, SLOT(setDisplayCrosshair(bool)));
+  connect(displayControlsAction, SIGNAL(toggled(bool)), outputWindow, SLOT(setCanvasDisplayCrosshair(bool)));
+
+  // Toggle display of canvas controls.
+  displayPaintControlsAction = new QAction(tr("&Display Controls of Mappings of a Paint"), this);
+  //displayPaintControlsAction->setShortcut(Qt::ALT + Qt::Key_C);
+  displayPaintControlsAction->setIcon(QIcon(":/control-points"));
+  displayPaintControlsAction->setToolTip(tr("Display all canvas controls related to current paint"));
+  displayPaintControlsAction->setIconVisibleInMenu(false);
+  displayPaintControlsAction->setCheckable(true);
+  displayPaintControlsAction->setChecked(_displayPaintControls);
+  displayPaintControlsAction->setShortcutContext(Qt::ApplicationShortcut);
+  addAction(displayPaintControlsAction);
+  // Manage show/hide of canvas controls.
+  connect(displayPaintControlsAction, SIGNAL(toggled(bool)), this, SLOT(enableDisplayPaintControls(bool)));
+//  connect(displayPaintControlsAction, SIGNAL(toggled(bool)), outputWindow, SLOT(setDisplayCrosshair(bool)));
+  connect(displayControlsAction, SIGNAL(toggled(bool)), displayPaintControlsAction, SLOT(setEnabled(bool)));
 
   // Toggle sticky vertices
   stickyVerticesAction = new QAction(tr("&Sticky Vertices"), this);
@@ -1678,10 +1816,10 @@ void MainWindow::createActions()
   // Manage sticky vertices
   connect(stickyVerticesAction, SIGNAL(toggled(bool)), this, SLOT(enableStickyVertices(bool)));
 
-  displayTestSignalAction = new QAction(tr("&Display Test Signal"), this);
+  displayTestSignalAction = new QAction(tr("Show &Test Signal"), this);
   displayTestSignalAction->setShortcut(Qt::ALT + Qt::Key_T);
-  displayTestSignalAction->setIcon(QIcon(":/control-points"));
-  displayTestSignalAction->setToolTip(tr("Display test signal"));
+  displayTestSignalAction->setIcon(QIcon(":/toggle-test-signal"));
+  displayTestSignalAction->setToolTip(tr("Show Test signal"));
   displayTestSignalAction->setIconVisibleInMenu(false);
   displayTestSignalAction->setCheckable(true);
   displayTestSignalAction->setChecked(false);
@@ -1691,15 +1829,15 @@ void MainWindow::createActions()
   connect(displayTestSignalAction, SIGNAL(toggled(bool)), outputWindow, SLOT(setDisplayTestSignal(bool)));
 //  connect(displayTestSignalAction, SIGNAL(toggled(bool)), this, SLOT(update()));
 
-  // Toggle display of Undo Stack
-  displayUndoStackAction = new QAction(tr("Display &Undo Stack"), this);
-  displayUndoStackAction->setShortcut(Qt::ALT + Qt::Key_U);
-  displayUndoStackAction->setCheckable(true);
-  displayUndoStackAction->setChecked(_displayUndoStack);
-  displayUndoStackAction->setShortcutContext(Qt::ApplicationShortcut);
-  addAction(displayUndoStackAction);
-  // Manage show/hide of Undo Stack
-  connect(displayUndoStackAction, SIGNAL(toggled(bool)), this, SLOT(displayUndoStack(bool)));
+  // Toggle display of Undo History
+  displayUndoHistoryAction = new QAction(tr("Display &Undo History"), this);
+  displayUndoHistoryAction->setShortcut(Qt::ALT + Qt::Key_U);
+  displayUndoHistoryAction->setCheckable(true);
+  displayUndoHistoryAction->setChecked(_displayUndoStack);
+  displayUndoHistoryAction->setShortcutContext(Qt::ApplicationShortcut);
+  addAction(displayUndoHistoryAction);
+  // Manage show/hide of Undo History
+  connect(displayUndoHistoryAction, SIGNAL(toggled(bool)), this, SLOT(displayUndoHistory(bool)));
 
   // Toggle display of Console output
   openConsoleAction = new QAction(tr("Open Conso&le"), this);
@@ -1730,25 +1868,25 @@ void MainWindow::createActions()
 
   // Perspectives
   // Main perspective (Source + destination)
-  mainViewAction = new QAction(tr("Main Perspective"), this);
+  mainViewAction = new QAction(tr("Main Layout"), this);
   mainViewAction->setCheckable(true);
   mainViewAction->setChecked(true);
-  mainViewAction->setShortcut(Qt::CTRL + Qt::ALT + Qt::Key_1);
-  mainViewAction->setToolTip(tr("Switch to the Main perspective."));
+  mainViewAction->setShortcut(Qt::CTRL + Qt::Key_1);
+  mainViewAction->setToolTip(tr("Switch to the Main layout."));
   connect(mainViewAction, SIGNAL(triggered(bool)), canvasSplitter->widget(0), SLOT(setVisible(bool)));
   connect(mainViewAction, SIGNAL(triggered(bool)), canvasSplitter->widget(1), SLOT(setVisible(bool)));
   // Source Only
-  sourceViewAction = new QAction(tr("Source Perspective"), this);
+  sourceViewAction = new QAction(tr("Source Layout"), this);
   sourceViewAction->setCheckable(true);
-  sourceViewAction->setShortcut(Qt::CTRL + Qt::ALT + Qt::Key_2);
-  sourceViewAction->setToolTip(tr("Switch to the Source perspective."));
+  sourceViewAction->setShortcut(Qt::CTRL + Qt::Key_2);
+  sourceViewAction->setToolTip(tr("Switch to the Source layout."));
   connect(sourceViewAction, SIGNAL(triggered(bool)), canvasSplitter->widget(0), SLOT(setVisible(bool)));
   connect(sourceViewAction, SIGNAL(triggered(bool)), canvasSplitter->widget(1), SLOT(setHidden(bool)));
   // Destination Only
-  destViewAction = new QAction(tr("Destination Perspective"), this);
+  destViewAction = new QAction(tr("Destination Layout"), this);
   destViewAction->setCheckable(true);
-  destViewAction->setShortcut(Qt::CTRL + Qt::ALT + Qt::Key_3);
-  destViewAction->setToolTip(tr("Switch to the Destination perspective."));
+  destViewAction->setShortcut(Qt::CTRL + Qt::Key_3);
+  destViewAction->setToolTip(tr("Switch to the Destination layout."));
   connect(destViewAction, SIGNAL(triggered(bool)), canvasSplitter->widget(0), SLOT(setHidden(bool)));
   connect(destViewAction, SIGNAL(triggered(bool)), canvasSplitter->widget(1), SLOT(setVisible(bool)));
   // Groups all actions
@@ -1756,6 +1894,24 @@ void MainWindow::createActions()
   perspectiveActionGroup->addAction(mainViewAction);
   perspectiveActionGroup->addAction(sourceViewAction);
   perspectiveActionGroup->addAction(destViewAction);
+
+  // Helps
+  // Bug report
+  bugReportAction = new QAction(tr("Report an issue"), this);
+  connect(bugReportAction, SIGNAL(triggered()), this, SLOT(reportBug()));
+  // Support
+  supportAction = new QAction(tr("Technical support"), this);
+  connect(supportAction, SIGNAL(triggered()), this, SLOT(technicalSupport()));
+  // Documentation
+  docAction = new QAction(tr("Documentation"), this);
+  connect(docAction, SIGNAL(triggered()), this, SLOT(documentation()));
+  // Send us feedback
+  feedbackAction = new QAction(tr("Submit feedback via email"), this);
+  connect(feedbackAction, SIGNAL(triggered()), this, SLOT(sendFeedback()));
+
+  // All available screen as action
+  updateScreenActions();
+//  outputScreenMenu->addActions(screenActions);
 }
 
 void MainWindow::startFullScreen()
@@ -1785,31 +1941,35 @@ void MainWindow::createMenus()
   fileMenu->addAction(saveAsAction);
   fileMenu->addSeparator();
   fileMenu->addAction(importMediaAction);
+  fileMenu->addAction(openCameraAction);
   fileMenu->addAction(addColorAction);
 
   // Recent file separator
   separatorAction = fileMenu->addSeparator();
   recentFileMenu = fileMenu->addMenu(tr("Open Recents Projects"));
-  for (int i = 0; i < MaxRecentFiles; ++i)
+  for (int i = 0; i < MaxRecentFiles; ++i) {
     recentFileMenu->addAction(recentFileActions[i]);
+  }
   recentFileMenu->addAction(clearRecentFileActions);
 
   // Recent import video
   recentVideoMenu = fileMenu->addMenu(tr("Open Recents Videos"));
   recentVideoMenu->addAction(emptyRecentVideos);
-  for (int i = 0; i < MaxRecentVideo; ++i)
+  for (int i = 0; i < MaxRecentVideo; ++i) {
     recentVideoMenu->addAction(recentVideoActions[i]);
+  }
 
   // Exit
   fileMenu->addSeparator();
   fileMenu->addAction(exitAction);
-
 
   // Edit.
   editMenu = menuBar->addMenu(tr("&Edit"));
   // Undo & Redo menu
   editMenu->addAction(undoAction);
   editMenu->addAction(redoAction);
+  editMenu->addSeparator();
+  editMenu->addAction(stickyVerticesAction);
   editMenu->addSeparator();
   // Source canvas menu
   sourceMenu = editMenu->addMenu(tr("&Source"));
@@ -1828,52 +1988,60 @@ void MainWindow::createMenus()
 
   // View.
   viewMenu = menuBar->addMenu(tr("&View"));
-  // Toolbars menu
-  toolBarsMenu = viewMenu->addMenu(tr("Toolbars"));
-#ifdef Q_OS_LINUX
-  if (QString(getenv("XDG_CURRENT_DESKTOP")).toLower() != "unity")
-    toolBarsMenu->addAction(showMenuBarAction);
-#endif
-#ifdef Q_OS_WIN
-  toolBarsMenu->addAction(showMenuBarAction);
-#endif
-  viewMenu->addSeparator();
-  viewMenu->addAction(displayControlsAction);
-  viewMenu->addAction(stickyVerticesAction);
-  viewMenu->addAction(displayTestSignalAction);
-  viewMenu->addSeparator();
-  viewMenu->addAction(displayUndoStackAction);
-  viewMenu->addAction(displayZoomToolAction);
-  viewMenu->addSeparator();
+
   viewMenu->addAction(outputFullScreenAction);
-
-  // Run.
-  playbackMenu = menuBar->addMenu(tr("&Playback"));
-  playbackMenu->addAction(playAction);
-  playbackMenu->addAction(pauseAction);
-  playbackMenu->addAction(rewindAction);
-
-  // Tools
-  toolsMenu = menuBar->addMenu(tr("&Tools"));
-  toolsMenu->addAction(openConsoleAction);
+  viewMenu->addAction(displayTestSignalAction);
+  viewMenu->addAction(displayControlsAction);
+  viewMenu->addAction(displayPaintControlsAction);
+  outputScreenMenu = viewMenu->addMenu(tr("&Output screen"));
+  outputScreenMenu->addActions(screenActions);
+  viewMenu->addSeparator();
+  // Playback.
+  viewMenu->addAction(playAction);
+  viewMenu->addAction(pauseAction);
+  viewMenu->addAction(rewindAction);
 
   // Window
   windowMenu = menuBar->addMenu(tr("&Window"));
+
+  // Perspectives
   windowMenu->addAction(mainViewAction);
   windowMenu->addAction(sourceViewAction);
   windowMenu->addAction(destViewAction);
+  windowMenu->addSeparator();
+
+  // Tools.
+  windowMenu->addAction(displayUndoHistoryAction);
+  windowMenu->addAction(openConsoleAction);
+  windowMenu->addSeparator();
+
+  // Menus/toolbars.
+  windowMenu->addAction(displayZoomToolAction);
+#ifdef Q_OS_LINUX
+  if (QString(getenv("XDG_CURRENT_DESKTOP")).toLower() != "unity")
+    windowMenu->addAction(showMenuBarAction);
+#endif
+#ifdef Q_OS_WIN32
+  windowMenu->addAction(showMenuBarAction);
+#endif
 
   // Help.
   helpMenu = menuBar->addMenu(tr("&Help"));
+  helpMenu->addAction(docAction);
+  helpMenu->addAction(feedbackAction);
+  helpMenu->addAction(supportAction);
+  helpMenu->addAction(bugReportAction);
+  helpMenu->addSeparator();
   helpMenu->addAction(aboutAction);
-  //  helpMenu->addAction(aboutQtAction);
 
+  //  helpMenu->addAction(aboutQtAction);
 }
 
 void MainWindow::createMappingContextMenu()
 {
   // Context menu.
   mappingContextMenu = new QMenu(this);
+  mappingContextMenu->installEventFilter(this);
 
   // Add different Action
   mappingContextMenu->addAction(cloneMappingAction);
@@ -1899,6 +2067,7 @@ void MainWindow::createPaintContextMenu()
 {
   // Paint Context Menu
   paintContextMenu = new QMenu(this);
+  paintContextMenu->installEventFilter(this);
 
   // Add Actions
   paintContextMenu->addAction(deletePaintAction);
@@ -1916,9 +2085,9 @@ void MainWindow::createPaintContextMenu()
 void MainWindow::createToolBars()
 {
   mainToolBar = addToolBar(tr("&Toolbar"));
-  mainToolBar->setIconSize(QSize(MM::TOP_TOOLBAR_ICON_SIZE, MM::TOP_TOOLBAR_ICON_SIZE));
   mainToolBar->setMovable(false);
   mainToolBar->addAction(importMediaAction);
+  mainToolBar->addAction(openCameraAction);
   mainToolBar->addAction(addColorAction);
 
   mainToolBar->addSeparator();
@@ -1946,7 +2115,7 @@ void MainWindow::createToolBars()
 
   // Toggle show/hide of toolbar
   showToolBarAction = mainToolBar->toggleViewAction();
-  toolBarsMenu->addAction(showToolBarAction);
+  windowMenu->addAction(showToolBarAction);
 
   // Add toolbars.
   addToolBar(Qt::TopToolBarArea, mainToolBar);
@@ -1964,10 +2133,10 @@ void MainWindow::createStatusBar()
   sourceZoomLabel = new QLabel(statusBar());
   sourceZoomLabel->setFrameStyle(QFrame::Panel | QFrame::Sunken);
   sourceZoomLabel->setContentsMargins(2, 0, 0, 0);
-  // Undoview statut
-  undoLabel = new QLabel(statusBar());
-  undoLabel->setFrameStyle(QFrame::Panel | QFrame::Sunken);
-  undoLabel->setContentsMargins(2, 0, 0, 0);
+  // last action taking statut
+  lastActionLabel = new QLabel(statusBar());
+  lastActionLabel->setFrameStyle(QFrame::Panel | QFrame::Sunken);
+  lastActionLabel->setContentsMargins(2, 0, 0, 0);
   // Standard message
   currentMessageLabel = new QLabel(statusBar());
   currentMessageLabel->setFrameStyle(QFrame::Panel | QFrame::Sunken);
@@ -1976,13 +2145,18 @@ void MainWindow::createStatusBar()
   mousePosLabel = new QLabel(statusBar());
   mousePosLabel->setFrameStyle(QFrame::Panel | QFrame::Sunken);
   mousePosLabel->setContentsMargins(2, 0, 0, 0);
+  // FPS.
+  trueFramesPerSecondsLabel = new QLabel(statusBar());
+  trueFramesPerSecondsLabel->setFrameStyle(QFrame::Panel | QFrame::Sunken);
+  trueFramesPerSecondsLabel->setContentsMargins(2, 0, 0, 0);
 
   // Add permanently into the statut bar
   statusBar()->addPermanentWidget(currentMessageLabel, 5);
-  statusBar()->addPermanentWidget(undoLabel, 4);
+  statusBar()->addPermanentWidget(lastActionLabel, 4);
   statusBar()->addPermanentWidget(mousePosLabel, 3);
   statusBar()->addPermanentWidget(sourceZoomLabel, 1);
   statusBar()->addPermanentWidget(destinationZoomLabel, 1);
+  statusBar()->addPermanentWidget(trueFramesPerSecondsLabel, 1);
 
   // Update the status bar
   updateStatusBar();
@@ -1992,12 +2166,12 @@ void MainWindow::readSettings()
 {
   // FIXME: for each setting that is new since the first release in the major version number branch,
   // make sure it exists before reading its value.
-  QSettings settings("MapMap", "MapMap");
+  QSettings settings;
 
   // settings present since 0.1.0:
   restoreGeometry(settings.value("geometry").toByteArray());
   restoreState(settings.value("windowState").toByteArray());
-  
+
   mainSplitter->restoreState(settings.value("mainSplitter").toByteArray());
   paintSplitter->restoreState(settings.value("paintSplitter").toByteArray());
   mappingSplitter->restoreState(settings.value("mappingSplitter").toByteArray());
@@ -2005,44 +2179,34 @@ void MainWindow::readSettings()
   outputWindow->restoreGeometry(settings.value("outputWindow").toByteArray());
 
   // new in 0.1.2:
-  if (settings.contains("displayOutputWindow"))
-  {
-    outputFullScreenAction->setChecked(settings.value("displayOutputWindow").toBool());
-    outputWindow->setFullScreen(outputFullScreenAction->isChecked());
-  }
-  if (settings.contains("displayTestSignal"))
-  {
-    displayTestSignalAction->setChecked(settings.value("displayTestSignal").toBool());
-    enableTestSignal(displayTestSignalAction->isChecked());
-  }
-  if (settings.contains("displayControls"))
-  {
-    displayControlsAction->setChecked(settings.value("displayControls").toBool());
-    outputWindow->setDisplayCrosshair(displayControlsAction->isChecked());
-  }
-
-  config_osc_receive_port = settings.value("osc_receive_port", 12345).toInt();
+  outputFullScreenAction->setChecked(settings.value("displayOutputWindow", MM::DISPLAY_OUTPUT_WINDOW).toBool());
+  displayTestSignalAction->setChecked(settings.value("displayTestSignal", MM::DISPLAY_TEST_SIGNAL).toBool());
+  displayControlsAction->setChecked(settings.value("displayControls", MM::DISPLAY_CONTROLS).toBool());
+  outputWindow->setCanvasDisplayCrosshair(settings.value("displayControls", MM::DISPLAY_CONTROLS).toBool());
+  oscListeningPort = settings.value("oscListeningPort", MM::DEFAULT_OSC_PORT).toInt();
 
   // Update Recent files and video
   updateRecentFileActions();
   updateRecentVideoActions();
 
   // new in 0.3.2
-  if (settings.contains("displayUndoStack"))
-    displayUndoStackAction->setChecked(settings.value("displayUndoStack").toBool());
-  if (settings.contains("zoomToolBar"))
-    displayZoomToolAction->setChecked(settings.value("zoomToolBar").toBool());
-  if (settings.contains("showMenuBar"))
-    showMenuBarAction->setChecked(settings.value("showMenuBar").toBool());
+  displayUndoHistoryAction->setChecked(settings.value("displayUndoStack", MM::DISPLAY_UNDO_HISTORY).toBool());
+  displayZoomToolAction->setChecked(settings.value("zoomToolBar", MM::DISPLAY_ZOOM_TOOLBAR).toBool());
+  showMenuBarAction->setChecked(settings.value("showMenuBar", MM::DISPLAY_MENU_BAR).toBool());
+
+  // New in 0.4.1
+   displayPaintControlsAction->setChecked(settings.value("displayAllControls", MM::DISPLAY_ALL_CONTROLS).toBool());
+   stickyVerticesAction->setChecked(settings.value("stickyVertices", MM::STICKY_VERTICES).toBool());
+   // Set toolbar icon size
+   int toolBarIconSize = settings.value("toolbarIconSize", MM::TOOLBAR_ICON_SIZE).toInt();
+   mainToolBar->setIconSize(QSize(toolBarIconSize, toolBarIconSize));
 }
 
 void MainWindow::writeSettings()
 {
-  QSettings settings("MapMap", "MapMap");
-
+  QSettings settings;
   settings.setValue("geometry", saveGeometry());
   settings.setValue("windowState", saveState());
-  
   settings.setValue("mainSplitter", mainSplitter->saveState());
   settings.setValue("paintSplitter", paintSplitter->saveState());
   settings.setValue("mappingSplitter", mappingSplitter->saveState());
@@ -2051,10 +2215,12 @@ void MainWindow::writeSettings()
   settings.setValue("displayOutputWindow", outputFullScreenAction->isChecked());
   settings.setValue("displayTestSignal", displayTestSignalAction->isChecked());
   settings.setValue("displayControls", displayControlsAction->isChecked());
-  settings.setValue("osc_receive_port", config_osc_receive_port);
-  settings.setValue("displayUndoStack", displayUndoStackAction->isChecked());
+  settings.setValue("displayAllControls", displayPaintControlsAction->isChecked());
+  settings.setValue("oscListeningPort", oscListeningPort);
+  settings.setValue("displayUndoStack", displayUndoHistoryAction->isChecked());
   settings.setValue("zoomToolBar", displayZoomToolAction->isChecked());
   settings.setValue("showMenuBar", showMenuBarAction->isChecked());
+  settings.setValue("stickyVertices", stickyVerticesAction->isChecked());
 }
 
 bool MainWindow::okToContinue()
@@ -2228,6 +2394,35 @@ void MainWindow::updateRecentVideoActions()
   }
 }
 
+void MainWindow::updateScreenActions()
+{
+  // Add new action for each screen
+  for (QScreen *screen: QApplication::screens()) {
+    QString actionLabel = tr("%1 - %2x%3")
+        .arg(screen->name())
+        .arg(QString::number(screen->size().width()))
+        .arg(QString::number(screen->size().height()));
+    if (screen == QApplication::primaryScreen()) {
+      actionLabel.append(tr(" - Primary"));
+    }
+    QAction *action = new QAction(actionLabel, this);
+    screenActions.append(action);
+    action->setData(screenActions.count() - 1);
+  }
+
+  // Configure actions
+  screenActionGroup = new QActionGroup(this);
+  int preferredScreen = outputWindow->getPreferredScreen();
+  for (QAction *action: screenActions) {
+    action->setCheckable(true);
+    if (action == screenActions.at(preferredScreen)) {
+      action->setChecked(true);
+    }
+    connect(action, SIGNAL(triggered()), this, SLOT(setupOutputScreen()));
+    screenActionGroup->addAction(action);
+  }
+}
+
 void MainWindow::clearRecentFileList()
 {
   recentFiles = settings.value("recentFiles").toStringList();
@@ -2248,14 +2443,19 @@ bool MainWindow::importMediaFile(const QString &fileName, bool isImage)
 {
   QFile file(fileName);
   QDir currentDir;
+  VideoType type = VIDEO_URI;
 
   if (!fileSupported(fileName, isImage))
     return false;
 
-  bool live = false;
+  if (fileName.contains(QString("/dev/video"))) {
+    type = VIDEO_WEBCAM;
+  }
+
   if (!file.open(QIODevice::ReadOnly)) {
-    if (file.isSequential())
-      live = true;
+    if (file.isSequential()) {
+      type = VIDEO_SHMSRC;
+    }
     else {
       QMessageBox::warning(this, tr("MapMap Project"),
                            tr("Cannot read file %1:\n%2.")
@@ -2268,16 +2468,11 @@ bool MainWindow::importMediaFile(const QString &fileName, bool isImage)
   QApplication::setOverrideCursor(Qt::WaitCursor);
 
   // Add media file to model.
-  uint mediaId = createMediaPaint(NULL_UID, fileName, 0, 0, isImage, live);
+  uint mediaId = createMediaPaint(NULL_UID, fileName, 0, 0, isImage, type);
 
   // Initialize position (center).
   QSharedPointer<Video> media = qSharedPointerCast<Video>(mappingManager->getPaintById(mediaId));
   Q_CHECK_PTR(media);
-
-  if (_isPlaying)
-    media->play();
-  else
-    media->pause();
 
   media->setPosition((sourceCanvas->width()  - media->getWidth() ) / 2.0f,
                      (sourceCanvas->height() - media->getHeight()) / 2.0f );
@@ -2309,12 +2504,6 @@ bool MainWindow::addColorPaint(const QColor& color)
   // Initialize position (center).
   QSharedPointer<Color> colorPaint = qSharedPointerCast<Color>(mappingManager->getPaintById(colorId));
   Q_CHECK_PTR(colorPaint);
-
-  // Does not do anything...
-  if (_isPlaying)
-    colorPaint->play();
-  else
-    colorPaint->pause();
 
   QApplication::restoreOverrideCursor();
 
@@ -2377,6 +2566,9 @@ void MainWindow::addPaintItem(uid paintId, const QIcon& icon, const QString& nam
 
   // Window was modified.
   windowModified();
+
+  // Update playing state.
+  updatePlayingState();
 }
 
 void MainWindow::updatePaintItem(uid paintId, const QIcon& icon, const QString& name) {
@@ -2427,12 +2619,12 @@ void MainWindow::addMappingItem(uid mappingId)
       mapper = MappingGui::ptr(new TriangleTextureMappingGui(textureMapping));
   }
   // Mesh
-  else if (shapeType == "mesh" || shapeType == "quad")
+  else if (shapeType == "mesh")
   {
-    label = QString(shapeType == "mesh" ? "Mesh %1" : "Quad %1").arg(mappingId);
+    label = QString("Mesh %1").arg(mappingId);
     icon = QIcon(":/shape-mesh");
     if (paintType == "color")
-      mapper = MappingGui::ptr(new PolygonColorMappingGui(mapping));
+      mapper = MappingGui::ptr(new MeshColorMappingGui(mapping));
     else
       mapper = MappingGui::ptr(new MeshTextureMappingGui(textureMapping));
   }
@@ -2483,12 +2675,9 @@ void MainWindow::addMappingItem(uid mappingId)
   contentTab->setCurrentWidget(mappingSplitter);
 
   // Add item to layerList widget.
-  mappingListModel->addItem(icon, label, mappingId);
+  mappingListModel->addItem(mapping, icon, label);
   mappingListModel->updateModel();
   setCurrentMapping(mappingId);
-
-  // Disable Test signal when add Shapes
-  enableTestSignal(false);
 
   // Add items to scenes.
   if (mapper->getInputGraphicsItem())
@@ -2498,6 +2687,9 @@ void MainWindow::addMappingItem(uid mappingId)
 
   // Window was modified.
   windowModified();
+
+  // Update playing state.
+  updatePlayingState();
 }
 
 void MainWindow::removeMappingItem(uid mappingId)
@@ -2530,6 +2722,9 @@ void MainWindow::removeMappingItem(uid mappingId)
 
   // Window was modified.
   windowModified();
+
+  // Update playing state.
+  updatePlayingState();
 }
 
 void MainWindow::removePaintItem(uid paintId)
@@ -2571,6 +2766,9 @@ void MainWindow::removePaintItem(uid paintId)
   windowModified();
   // Build mapping!
   // FIXME: mapping->build(); // I removed this 2014-04-25
+
+  // Update playing state.
+  updatePlayingState();
 }
 
 void MainWindow::clearWindow()
@@ -2624,13 +2822,13 @@ QString MainWindow::locateMediaFile(const QString &uri, bool isImage)
   // Show a warning and offer to locate the file
   QMessageBox::warning(this,
                        tr("Cannot load movie"),
-                       tr("Unable to use the file « %1 » \n"
-                          "The original file is not found. Will you locate?")
+                       tr("Unable to use file %1.\n"
+                          "The original file is not found. Please locate.")
                        .arg(filename));
 
   // Set the new uri
   url = QFileDialog::getOpenFileName(this,
-                                     tr("Locate file « %1 »").arg(filename),
+                                     tr("Locate file %1").arg(filename),
                                      directory,
                                      tr("%1 files (%2)")
                                      .arg(mediaType)
@@ -2639,12 +2837,12 @@ QString MainWindow::locateMediaFile(const QString &uri, bool isImage)
   return url;
 }
 
-MainWindow* MainWindow::instance() {
-  static MainWindow* inst = 0;
-  if (!inst) {
-    inst = new MainWindow;
+MainWindow* MainWindow::window() {
+  static MainWindow* instance = 0;
+  if (!instance) {
+    instance = new MainWindow;
   }
-  return inst;
+  return instance;
 }
 
 void MainWindow::updateCanvases()
@@ -2662,18 +2860,84 @@ void MainWindow::updateCanvases()
   updateStatusBar();
 }
 
+void MainWindow::processFrame()
+{
+  // Number of frames processed (restarted every second).
+  static unsigned int nFrames = 0;
+
+  // Update canvases.
+  updateCanvases();
+
+  // Update true FPS.
+  nFrames++;
+  if (nFrames > framesPerSecond())
+  {
+    // This is the real time needed to process one second.
+    qreal trueFramesPerSecond = nFrames / systemTimer->restart() * 1000.0;
+    trueFramesPerSecondsLabel->setText(
+        "FPS: " + QString::number(trueFramesPerSecond, 'f', 2) + " / " +
+        QString::number(framesPerSecond()  , 'f', 2));
+    nFrames = 0;
+  }
+}
+
+void MainWindow::updatePlayingState()
+{
+  // Pause all paints that are not visible.
+  if (isPlaying())
+  {
+    QVector<Paint::ptr> visiblePaints = mappingManager->getVisiblePaints();
+    for (int i=0; i<mappingManager->nPaints(); i++)
+    {
+      Paint::ptr paint = mappingManager->getPaint(i);
+      if (visiblePaints.contains(paint))
+      {
+        paint->play();
+      }
+      else
+      {
+        paint->pause();
+      }
+    }
+  }
+
+  // Pause everyone.
+  else
+  {
+    for (int i=0; i<mappingManager->nPaints(); i++)
+    {
+      mappingManager->getPaint(i)->pause();
+    }
+  }
+
+  // Update all paint items with correct icon.
+  for (int i=0; i<mappingManager->nPaints(); i++)
+  {
+    Paint::ptr paint = mappingManager->getPaint(i);
+    updatePaintItem(paint->getId(), getPaintIcon(paint), paint->getName());
+  }
+
+}
+
 void MainWindow::enableDisplayControls(bool display)
 {
   _displayControls = display;
   updateCanvases();
 }
 
-void MainWindow::enableTestSignal(bool enable)
+void MainWindow::setFramesPerSecond(qreal fps)
 {
+  _framesPerSecond = qMax(fps, 0.0);
+  videoTimer->setInterval( int( 1000 / _framesPerSecond ) );
+}
+
+void MainWindow::enableDisplayPaintControls(bool display)
+{
+  _displayPaintControls = display;
   updateCanvases();
 }
 
-void MainWindow::displayUndoStack(bool display)
+void MainWindow::displayUndoHistory(bool display)
 {
   _displayUndoStack = display;
 
@@ -2681,7 +2945,7 @@ void MainWindow::displayUndoStack(bool display)
   undoView = new QUndoView(getUndoStack(), this);
 
   if (display) {
-    contentTab->addTab(undoView, tr("Undo stack"));
+    contentTab->addTab(undoView, tr("Undo history"));
   } else {
     contentTab->removeTab(2);
   }
@@ -2719,28 +2983,31 @@ void MainWindow::showPaintContextMenu(const QPoint &point)
     paintContextMenu->exec(objectSender->mapToGlobal(point));
 }
 
-void MainWindow::play()
+void MainWindow::play(bool updatePlayPauseActions)
 {
   // Update buttons.
-  playAction->setVisible(false);
-  pauseAction->setVisible(true);
+  if (updatePlayPauseActions)
+  {
+    playAction->setVisible(false);
+    pauseAction->setVisible(true);
+  }
+
   _isPlaying = true;
 
-  // Start all paints.
-  for (int i=0; i<mappingManager->nPaints(); i++)
-    mappingManager->getPaint(i)->play();
+  updatePlayingState();
 }
 
-void MainWindow::pause()
+void MainWindow::pause(bool updatePlayPauseActions)
 {
   // Update buttons.
-  playAction->setVisible(true);
-  pauseAction->setVisible(false);
+  if (updatePlayPauseActions)
+  {
+    playAction->setVisible(true);
+    pauseAction->setVisible(false);
+  }
   _isPlaying = false;
 
-  // Pause all paints.
-  for (int i=0; i<mappingManager->nPaints(); i++)
-    mappingManager->getPaint(i)->pause();
+  updatePlayingState();
 }
 
 void MainWindow::rewind()
@@ -2753,6 +3020,20 @@ void MainWindow::rewind()
 QString MainWindow::strippedName(const QString &fullFileName)
 {
   return QFileInfo(fullFileName).fileName();
+}
+
+const QIcon MainWindow::getPaintIcon(Paint::ptr paint)
+{
+  if (paint->isPlaying())
+    return paint->getIcon();
+  else
+  {
+    QPixmap pixmap = paint->getIcon().pixmap(MM::MAPPING_LIST_ICON_SIZE, MM::MAPPING_LIST_ICON_SIZE);
+    QPainter painter(&pixmap);
+    painter.setPen(QPen(QColor(255, 0, 0, 128), 4));
+    painter.drawLine(0, 0, pixmap.width(), pixmap.height());
+    return QIcon(pixmap);
+  }
 }
 
 void MainWindow::connectProjectWidgets()
@@ -2777,13 +3058,13 @@ void MainWindow::connectProjectWidgets()
 
   connect(mappingListModel, SIGNAL(dataChanged(QModelIndex,QModelIndex)),
           this,        SLOT(handleMappingItemChanged(QModelIndex)));
-          
+
   connect(mappingListModel, SIGNAL(rowsMoved(QModelIndex,int,int,QModelIndex,int)),
           this,                 SLOT(handleMappingIndexesMoved()));
-          
+
   connect(mappingItemDelegate, SIGNAL(itemDuplicated(uid)),
           this, SLOT(duplicateMapping(uid)));
-          
+
   connect(mappingItemDelegate, SIGNAL(itemRemoved(uid)),
           this, SLOT(deleteMapping(uid)));
 }
@@ -2804,13 +3085,13 @@ void MainWindow::disconnectProjectWidgets()
 
   disconnect(mappingListModel, SIGNAL(dataChanged(QModelIndex,QModelIndex)),
           this,        SLOT(handleMappingItemChanged(QModelIndex)));
-          
+
   disconnect(mappingListModel, SIGNAL(rowsMoved(QModelIndex,int,int,QModelIndex,int)),
           this,                 SLOT(handleMappingIndexesMoved()));
-          
+
   disconnect(mappingItemDelegate, SIGNAL(itemDuplicated(uid)),
           this, SLOT(duplicateMapping(uid)));
-          
+
   connect(mappingItemDelegate, SIGNAL(itemRemoved(uid)),
           this, SLOT(deleteMapping(uid)));
 }
@@ -2910,7 +3191,7 @@ void MainWindow::removeCurrentMapping() {
 void MainWindow::startOscReceiver()
 {
 #ifdef HAVE_OSC
-  int port = config_osc_receive_port;
+  int port = oscListeningPort;
   std::ostringstream os;
   os << port;
 #if QT_VERSION >= 0x050500
@@ -2929,32 +3210,36 @@ void MainWindow::startOscReceiver()
 #endif
 }
 
-bool MainWindow::setOscPort(int portNumber)
+bool MainWindow::setOscPort(int port)
 {
-  return this->setOscPort(QString::number(portNumber));
+  if (port <= 1023 || port > 65535)
+  {
+    qWarning() << "OSC port is out of range: " << port << endl;
+    return false;
+  }
+
+  oscListeningPort = port;
+  startOscReceiver();
+
+  return true;
 }
 
 int MainWindow::getOscPort() const
 {
-  return config_osc_receive_port;
+  return oscListeningPort;
 }
 
 bool MainWindow::setOscPort(QString portNumber)
 {
-  if (Util::isNumeric(portNumber))
+  bool ok;
+  int port = portNumber.toInt(&ok);
+  if (ok)
   {
-    int port = portNumber.toInt();
-    if (port <= 1023 || port > 65535)
-    {
-      std::cout << "OSC port is out of range: " << portNumber.toInt() << std::endl;
-      return false;
-    }
-    config_osc_receive_port = port;
-    startOscReceiver();
+    return setOscPort(port);
   }
   else
   {
-    std::cout << "OSC port is not a number: " << portNumber.toInt() << std::endl;
+    qWarning() << "OSC port is not a number: " << portNumber << endl;
     return false;
   }
   return true;
@@ -2970,6 +3255,7 @@ void MainWindow::pollOscInterface()
 void MainWindow::exitFullScreen()
 {
   outputFullScreenAction->setChecked(false);
+  displayTestSignalAction->setChecked(false);
 }
 
 // void MainWindow::applyOscCommand(const QVariantList& command)
@@ -3028,129 +3314,9 @@ void MainWindow::exitFullScreen()
 //       open();
 // }
 
-bool MainWindow::setTextureUri(int texture_id, const std::string &uri)
-{
-  // TODO: const QString &
-
-  bool success = false;
-  Paint::ptr paint = this->mappingManager->getPaintById(texture_id);
-  if (paint.isNull())
-  {
-    std::cout << "No such texture paint id " << texture_id << std::endl;
-    success = false;
-  }
-  else
-  {
-    if (paint->getType() == "media")
-    {
-      Video *media = static_cast<Video*>(paint.data()); // FIXME: use sharedptr cast
-      videoTimer->stop();
-      success = media->setUri(QString(uri.c_str()));
-      videoTimer->start();
-    }
-    else if (paint->getType() == "image")
-    {
-      Image *media = (Image*) paint.data(); // FIXME: use sharedptr cast
-      videoTimer->stop();
-      success = media->setUri(QString(uri.c_str()));
-      videoTimer->start();
-    }
-    else
-    {
-      std::cout << "Paint id " << texture_id << " is not a media texture." << std::endl;
-      return false;
-    }
-  }
-  return success;
-}
-
-bool MainWindow::setTextureRate(int texture_id, double rate)
-{
-  Paint::ptr paint = this->mappingManager->getPaintById(texture_id);
-  if (paint.isNull())
-  {
-    std::cout << "No such texture paint id " << texture_id << std::endl;
-    return false;
-  }
-  else
-  {
-    if (paint->getType() == "media")
-    {
-      Video *media = static_cast<Video*>(paint.data()); // FIXME: use sharedptr cast
-      videoTimer->stop();
-      media->setRate(rate);
-      videoTimer->start();
-    }
-    else
-    {
-      std::cout << "Paint id " << texture_id << " is not a media texture." << std::endl;
-      return false;
-    }
-  }
-  return true;
-}
-
-bool MainWindow::setTextureVolume(int texture_id, double volume)
-{
-  Paint::ptr paint = this->mappingManager->getPaintById(texture_id);
-  if (paint.isNull())
-  {
-    std::cout << "No such texture paint id " << texture_id << std::endl;
-    return false;
-  }
-  else
-  {
-    if (paint->getType() == "media")
-    {
-      Video *media = static_cast<Video*>(paint.data()); // FIXME: use sharedptr cast
-      videoTimer->stop();
-      media->setVolume(volume);
-      videoTimer->start();
-    }
-    else
-    {
-      std::cout << "Paint id " << texture_id << " is not a media texture." << std::endl;
-      return false;
-    }
-  }
-  return true;
-}
-
-void MainWindow::setTexturePlayState(int texture_id, bool played)
-{
-  Paint::ptr paint = this->mappingManager->getPaintById(texture_id);
-  if (paint.isNull())
-  {
-    std::cout << "No such texture paint id " << texture_id << std::endl;
-  }
-  else
-  {
-    if (paint->getType() == "media")
-    {
-      if (played)
-      {
-        videoTimer->stop();
-        paint->play();
-        videoTimer->start();
-      }
-      else
-      {
-        videoTimer->stop();
-        paint->pause();
-        videoTimer->start();
-      }
-
-    }
-    else
-    {
-      std::cout << "Paint id " << texture_id << " is not a media texture." << std::endl;
-    }
-  }
-}
-
 void MainWindow::quitMapMap()
 {
   close();
 }
 
-MM_END_NAMESPACE
+}
