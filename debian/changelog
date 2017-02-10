@@ -1,3 +1,9 @@
+mapmap (0.5.0-2~xenial~ppa1) xenial; urgency=low
+
+  * Add Qt Multimedia as a build-dep.
+
+ -- Alexandre Quessy <aalex@mapmap.info>  Fri, 10 Feb 2017 17:44:05 -0500
+
 mapmap (0.5.0-1~xenial~ppa1) xenial; urgency=low
 
   * New upstream release
